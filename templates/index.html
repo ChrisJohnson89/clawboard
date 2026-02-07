@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ title }}</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #0f1620;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --ok: #2ea043;
+      --bad: #f85149;
+      --warn: #d29922;
+      --line: #30363d;
+    }
+    body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system; background: var(--bg); color: var(--text); }
+    header { padding: 16px 18px; border-bottom: 1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+    header .title { font-weight: 700; letter-spacing: 0.2px; }
+    header .meta { color: var(--muted); font-size: 12px; }
+    main { padding: 18px; display:grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .span-4 { grid-column: span 4; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .k { color: var(--muted); font-size: 12px; }
+    .v { font-size: 18px; font-weight: 650; }
+    .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border:1px solid var(--line); }
+    .ok { color: var(--ok); border-color: rgba(46,160,67,.4); }
+    .bad { color: var(--bad); border-color: rgba(248,81,73,.4); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas; }
+    .feed { max-height: 260px; overflow:auto; }
+    .feed-item { padding: 10px 10px; border-bottom: 1px solid var(--line); }
+    .feed-item:last-child { border-bottom: none; }
+    .feed-item .t { color: var(--muted); font-size: 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="title">{{ title }}</div>
+      <div class="meta">Local-first OpenClaw dashboard • SSE live updates</div>
+    </div>
+    <div class="meta" id="clock">—</div>
+  </header>
+
+  <main>
+    <section class="card span-4">
+      <div class="k">Gateway</div>
+      <div class="v" id="gw">—</div>
+      <div class="k mono" id="gwmeta">—</div>
+    </section>
+
+    <section class="card span-8">
+      <div class="k">Last restart/config apply</div>
+      <div class="v" id="restartMsg">—</div>
+      <div class="k mono" id="restartMeta">—</div>
+    </section>
+
+    <section class="card span-12">
+      <div class="k">Activity</div>
+      <div class="feed" id="feed"></div>
+    </section>
+  </main>
+
+<script>
+  const feed = document.getElementById('feed');
+  const gw = document.getElementById('gw');
+  const gwmeta = document.getElementById('gwmeta');
+  const restartMsg = document.getElementById('restartMsg');
+  const restartMeta = document.getElementById('restartMeta');
+
+  const fmtTime = (ts) => {
+    try { return new Date(ts*1000).toLocaleString(); } catch { return String(ts); }
+  }
+
+  function addFeed(kind, text, meta) {
+    const el = document.createElement('div');
+    el.className = 'feed-item';
+    el.innerHTML = `
+      <div class="t">${fmtTime(Date.now()/1000)} • ${kind}</div>
+      <div>${text}</div>
+      <div class="k mono">${meta || ''}</div>
+    `;
+    feed.prepend(el);
+  }
+
+  async function boot() {
+    const s = await fetch('/api/status').then(r=>r.json());
+    renderStatus(s);
+
+    const es = new EventSource('/api/events');
+    es.addEventListener('gateway', (e) => {
+      const d = JSON.parse(e.data);
+      addFeed('gateway', d.ok ? 'Gateway reachable' : 'Gateway unreachable', `latency_ms=${d.latency_ms}`);
+      refresh();
+    });
+    es.addEventListener('restart', (e) => {
+      const d = JSON.parse(e.data);
+      const msg = d.payload?.message || 'Restart/config apply';
+      addFeed('restart', msg, JSON.stringify(d.payload || {}));
+      refresh();
+    });
+  }
+
+  async function refresh() {
+    const s = await fetch('/api/status').then(r=>r.json());
+    renderStatus(s);
+  }
+
+  function renderStatus(s) {
+    if (s.gateway_ok) {
+      gw.innerHTML = `<span class="pill ok">OK</span> <span class="mono">${s.gateway_latency_ms ?? '-'}ms</span>`;
+      gwmeta.textContent = s.gateway_url || '(no gateway url configured)';
+    } else {
+      gw.innerHTML = `<span class="pill bad">DOWN</span>`;
+      gwmeta.textContent = s.gateway_url || '(no gateway url configured)';
+    }
+
+    if (s.last_restart && s.last_restart.payload) {
+      restartMsg.textContent = s.last_restart.payload.message || '(no message)';
+      restartMeta.textContent = JSON.stringify(s.last_restart.payload.stats || {});
+    } else {
+      restartMsg.textContent = '—';
+      restartMeta.textContent = '—';
+    }
+  }
+
+  setInterval(()=>{
+    document.getElementById('clock').textContent = new Date().toLocaleString();
+  }, 1000);
+
+  boot();
+</script>
+</body>
+</html>
