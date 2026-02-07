@@ -38,6 +38,9 @@ class Status:
     gateway_ok: bool
     gateway_url: Optional[str]
     gateway_latency_ms: Optional[int]
+    gateway_version: Optional[str]
+    cron_ok: Optional[bool]
+    cron_error: Optional[str]
     last_restart: Optional[Dict[str, Any]]
 
 
@@ -77,6 +80,37 @@ def _gateway_headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {GATEWAY_TOKEN}"}
 
 
+
+
+def gateway_version() -> Optional[str]:
+    if not GATEWAY_URL:
+        return None
+    url = GATEWAY_URL.rstrip("/") + "/rpc/version"
+    try:
+        r = requests.get(url, headers=_gateway_headers(), timeout=2)
+        if r.status_code != 200:
+            return None
+        j = r.json()
+        return j.get("version") or j.get("result", {}).get("version")
+    except Exception:
+        return None
+
+
+def cron_status() -> tuple[Optional[bool], Optional[str]]:
+    if not GATEWAY_URL:
+        return (None, None)
+    url = GATEWAY_URL.rstrip("/") + "/rpc/cron/status"
+    try:
+        r = requests.get(url, headers=_gateway_headers(), timeout=2)
+        if r.status_code != 200:
+            return (False, f"http {r.status_code}")
+        j = r.json()
+        ok = j.get("ok")
+        return (bool(ok), None if ok else (j.get("error") or "cron not ok"))
+    except Exception as e:
+        return (False, str(e))
+
+
 def gateway_probe() -> tuple[bool, Optional[int]]:
     """Try to hit the gateway health probe."""
     if not GATEWAY_URL:
@@ -97,12 +131,17 @@ def compute_status() -> Status:
 
     last_restart = _read_json(RESTART_SENTINEL)
     gw_ok, gw_latency = gateway_probe()
+    gw_ver = gateway_version()
+    cron_ok, cron_err = cron_status()
 
     st = Status(
         ts=time.time(),
         gateway_ok=gw_ok,
         gateway_url=GATEWAY_URL,
         gateway_latency_ms=gw_latency,
+        gateway_version=gw_ver,
+        cron_ok=cron_ok,
+        cron_error=cron_err,
         last_restart=last_restart,
     )
 

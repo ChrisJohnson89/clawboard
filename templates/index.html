@@ -50,6 +50,7 @@
       <div class="k">Gateway</div>
       <div class="v" id="gw">—</div>
       <div class="k mono" id="gwmeta">—</div>
+      <div class="k mono" id="cronmeta">—</div>
     </section>
 
     <section class="card span-8">
@@ -68,6 +69,7 @@
   const feed = document.getElementById('feed');
   const gw = document.getElementById('gw');
   const gwmeta = document.getElementById('gwmeta');
+  const cronmeta = document.getElementById('cronmeta');
   const restartMsg = document.getElementById('restartMsg');
   const restartMeta = document.getElementById('restartMeta');
 
@@ -112,10 +114,12 @@
   function renderStatus(s) {
     if (s.gateway_ok) {
       gw.innerHTML = `<span class="pill ok">OK</span> <span class="mono">${s.gateway_latency_ms ?? '-'}ms</span>`;
-      gwmeta.textContent = s.gateway_url || '(no gateway url configured)';
+      gwmeta.textContent = (s.gateway_url || '(no gateway url configured)') + (s.gateway_version ? (' • v' + s.gateway_version) : '');
+      cronmeta.textContent = (s.cron_ok === null || s.cron_ok === undefined) ? '' : ('cron: ' + (s.cron_ok ? 'ok' : ('error ' + (s.cron_error || ''))));
     } else {
       gw.innerHTML = `<span class="pill bad">DOWN</span>`;
-      gwmeta.textContent = s.gateway_url || '(no gateway url configured)';
+      gwmeta.textContent = (s.gateway_url || '(no gateway url configured)') + (s.gateway_version ? (' • v' + s.gateway_version) : '');
+      cronmeta.textContent = (s.cron_ok === null || s.cron_ok === undefined) ? '' : ('cron: ' + (s.cron_ok ? 'ok' : ('error ' + (s.cron_error || ''))));
     }
 
     if (s.last_restart && s.last_restart.payload) {
