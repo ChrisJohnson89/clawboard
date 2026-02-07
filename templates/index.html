@@ -98,6 +98,13 @@
       addFeed('link', d.linked ? 'Link channel connected' : 'Link channel disconnected', '');
       refresh();
     });
+    es.addEventListener('cron_run', (e) => {
+      const d = JSON.parse(e.data);
+      const txt = `${d.jobName || d.jobId} → ${d.status || 'unknown'}`;
+      addFeed('cron', txt, d.summary || '');
+      refresh();
+    });
+    
     es.addEventListener('restart', (e) => {
       const d = JSON.parse(e.data);
       const msg = d.payload?.message || 'Restart/config apply';

@@ -32,6 +32,9 @@ from flask import Flask, Response, jsonify, render_template
 
 APP_TITLE = os.getenv("CLAWBOARD_TITLE", "Clawboard")
 
+OPENCLAW_TIMEOUT_SEC = float(os.getenv("CLAWBOARD_OPENCLAW_TIMEOUT", "12"))
+CRON_RUNS_LIMIT = int(os.getenv("CLAWBOARD_CRON_RUNS_LIMIT", "8"))
+
 OPENCLAW_DIR = os.path.expanduser(os.getenv("OPENCLAW_DIR", "~/.openclaw"))
 RESTART_SENTINEL = os.path.join(OPENCLAW_DIR, "restart-sentinel.json")
 
@@ -55,6 +58,8 @@ class Status:
 
 _event_bus: "queue.Queue[dict]" = queue.Queue(maxsize=500)
 _last_status: Optional[Status] = None
+_last_good_openclaw_status: Optional[dict] = None
+_last_good_at: Optional[float] = None
 
 
 def _emit(evt: dict) -> None:
@@ -81,7 +86,7 @@ def _read_json(path: str) -> Optional[dict]:
         return None
 
 
-def _run_json(cmd: list[str], timeout: float = 4.0) -> tuple[bool, Optional[dict], Optional[str]]:
+def _run_json(cmd: list[str], timeout: float = OPENCLAW_TIMEOUT_SEC) -> tuple[bool, Optional[dict], Optional[str]]:
     """Run a command expected to output JSON to stdout."""
     try:
         p = subprocess.run(
@@ -106,11 +111,27 @@ def _run_json(cmd: list[str], timeout: float = 4.0) -> tuple[bool, Optional[dict
 
 
 def openclaw_status() -> tuple[bool, Optional[dict], Optional[str]]:
-    return _run_json(["openclaw", "status", "--json"], timeout=8.0)
+    return _run_json(["openclaw", "status", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
+
+
+
+
+def openclaw_cron_list() -> Optional[dict]:
+    ok, j, _err = _run_json(["openclaw", "cron", "list", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
+    if not ok or not isinstance(j, dict):
+        return None
+    return j
+
+
+def openclaw_cron_runs(job_id: str, limit: int = CRON_RUNS_LIMIT) -> Optional[dict]:
+    ok, j, _err = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", str(limit)], timeout=OPENCLAW_TIMEOUT_SEC)
+    if not ok or not isinstance(j, dict):
+        return None
+    return j
 
 
 def openclaw_cron_status() -> tuple[Optional[bool], Optional[int], Optional[int]]:
-    ok, j, _err = _run_json(["openclaw", "cron", "status", "--json"], timeout=8.0)
+    ok, j, _err = _run_json(["openclaw", "cron", "status", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
     if not ok or not isinstance(j, dict):
         return None, None, None
     return bool(j.get("enabled")), j.get("jobs"), j.get("nextWakeAtMs")
@@ -142,6 +163,7 @@ def compute_status() -> Status:
 def status_loop() -> None:
     prev_linked = None
     prev_restart_ts = None
+    prev_cron_last_run: dict[str, int] = {}
 
     while True:
         st = compute_status()
