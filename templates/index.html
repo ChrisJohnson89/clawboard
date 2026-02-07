@@ -47,9 +47,9 @@
 
   <main>
     <section class="card span-4">
-      <div class="k">Gateway</div>
-      <div class="v" id="gw">—</div>
-      <div class="k mono" id="gwmeta">—</div>
+      <div class="k">OpenClaw</div>
+      <div class="v" id="oc">—</div>
+      <div class="k mono" id="ocmeta">—</div>
       <div class="k mono" id="cronmeta">—</div>
     </section>
 
@@ -67,8 +67,8 @@
 
 <script>
   const feed = document.getElementById('feed');
-  const gw = document.getElementById('gw');
-  const gwmeta = document.getElementById('gwmeta');
+  const oc = document.getElementById('oc');
+  const ocmeta = document.getElementById('ocmeta');
   const cronmeta = document.getElementById('cronmeta');
   const restartMsg = document.getElementById('restartMsg');
   const restartMeta = document.getElementById('restartMeta');
@@ -93,9 +93,9 @@
     renderStatus(s);
 
     const es = new EventSource('/api/events');
-    es.addEventListener('gateway', (e) => {
+    es.addEventListener('link', (e) => {
       const d = JSON.parse(e.data);
-      addFeed('gateway', d.ok ? 'Gateway reachable' : 'Gateway unreachable', `latency_ms=${d.latency_ms}`);
+      addFeed('link', d.linked ? 'Link channel connected' : 'Link channel disconnected', '');
       refresh();
     });
     es.addEventListener('restart', (e) => {
@@ -112,14 +112,21 @@
   }
 
   function renderStatus(s) {
-    if (s.gateway_ok) {
-      gw.innerHTML = `<span class="pill ok">OK</span> <span class="mono">${s.gateway_latency_ms ?? '-'}ms</span>`;
-      gwmeta.textContent = (s.gateway_url || '(no gateway url configured)') + (s.gateway_version ? (' • v' + s.gateway_version) : '');
-      cronmeta.textContent = (s.cron_ok === null || s.cron_ok === undefined) ? '' : ('cron: ' + (s.cron_ok ? 'ok' : ('error ' + (s.cron_error || ''))));
+    if (s.openclaw_ok) {
+      oc.innerHTML = `<span class="pill ok">OK</span>`;
+      const link = s.openclaw_status?.linkChannel;
+      const linked = (link && link.linked !== undefined) ? link.linked : null;
+      const linkedTxt = linked === null ? '' : (linked ? 'linked' : 'unlinked');
+      ocmeta.textContent = `sessions=${s.openclaw_status?.sessions?.count ?? '?'} • ${linkedTxt}`;
     } else {
-      gw.innerHTML = `<span class="pill bad">DOWN</span>`;
-      gwmeta.textContent = (s.gateway_url || '(no gateway url configured)') + (s.gateway_version ? (' • v' + s.gateway_version) : '');
-      cronmeta.textContent = (s.cron_ok === null || s.cron_ok === undefined) ? '' : ('cron: ' + (s.cron_ok ? 'ok' : ('error ' + (s.cron_error || ''))));
+      oc.innerHTML = `<span class="pill bad">ERR</span>`;
+      ocmeta.textContent = s.openclaw_error || 'openclaw status failed';
+    }
+
+    if (s.cron_enabled === null || s.cron_enabled === undefined) {
+      cronmeta.textContent = '';
+    } else {
+      cronmeta.textContent = `cron: ${s.cron_enabled ? 'on' : 'off'} • jobs=${s.cron_jobs ?? '?'} • nextWakeAtMs=${s.cron_next_wake_at_ms ?? '?'}`;
     }
 
     if (s.last_restart && s.last_restart.payload) {

@@ -1,9 +1,20 @@
 """Clawboard — a local-first dashboard for OpenClaw.
 
+Principles:
+- Fast + lightweight by default.
+- Prefer local sources.
+- Use OpenClaw's own CLI to talk to the Gateway reliably.
+
+Why CLI?
+- The Gateway's HTTP surface is primarily the Control UI.
+- The `openclaw` CLI already knows the right RPC/WebSocket details.
+
+This app:
 - Serves a small web UI.
 - Provides /api/status and /api/events (SSE).
+- Emits a few meaningful events when state changes.
 
-This is intentionally simple: no DB, no secrets on disk.
+No DB. No secrets committed.
 """
 
 from __future__ import annotations
@@ -11,21 +22,16 @@ from __future__ import annotations
 import json
 import os
 import queue
+import subprocess
 import threading
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, Optional
 
-import requests
 from flask import Flask, Response, jsonify, render_template
 
 APP_TITLE = os.getenv("CLAWBOARD_TITLE", "Clawboard")
 
-# Optional: OpenClaw Gateway API
-GATEWAY_URL = os.getenv("OPENCLAW_GATEWAY_URL")  # e.g. http://127.0.0.1:18789
-GATEWAY_TOKEN = os.getenv("OPENCLAW_GATEWAY_TOKEN")
-
-# Local file-based signals (best effort)
 OPENCLAW_DIR = os.path.expanduser(os.getenv("OPENCLAW_DIR", "~/.openclaw"))
 RESTART_SENTINEL = os.path.join(OPENCLAW_DIR, "restart-sentinel.json")
 
@@ -35,12 +41,15 @@ app = Flask(__name__)
 @dataclass
 class Status:
     ts: float
-    gateway_ok: bool
-    gateway_url: Optional[str]
-    gateway_latency_ms: Optional[int]
-    gateway_version: Optional[str]
-    cron_ok: Optional[bool]
-    cron_error: Optional[str]
+
+    openclaw_ok: bool
+    openclaw_status: Optional[Dict[str, Any]]
+    openclaw_error: Optional[str]
+
+    cron_enabled: Optional[bool]
+    cron_jobs: Optional[int]
+    cron_next_wake_at_ms: Optional[int]
+
     last_restart: Optional[Dict[str, Any]]
 
 
@@ -49,13 +58,11 @@ _last_status: Optional[Status] = None
 
 
 def _emit(evt: dict) -> None:
-    """Emit an event to SSE listeners (best effort)."""
     evt = dict(evt)
     evt.setdefault("ts", time.time())
     try:
         _event_bus.put_nowait(evt)
     except queue.Full:
-        # drop oldest by draining one
         try:
             _event_bus.get_nowait()
         except queue.Empty:
@@ -74,74 +81,57 @@ def _read_json(path: str) -> Optional[dict]:
         return None
 
 
-def _gateway_headers() -> Dict[str, str]:
-    if not GATEWAY_TOKEN:
-        return {}
-    return {"Authorization": f"Bearer {GATEWAY_TOKEN}"}
-
-
-
-
-def gateway_version() -> Optional[str]:
-    if not GATEWAY_URL:
-        return None
-    url = GATEWAY_URL.rstrip("/") + "/rpc/version"
+def _run_json(cmd: list[str], timeout: float = 4.0) -> tuple[bool, Optional[dict], Optional[str]]:
+    """Run a command expected to output JSON to stdout."""
     try:
-        r = requests.get(url, headers=_gateway_headers(), timeout=2)
-        if r.status_code != 200:
-            return None
-        j = r.json()
-        return j.get("version") or j.get("result", {}).get("version")
-    except Exception:
-        return None
-
-
-def cron_status() -> tuple[Optional[bool], Optional[str]]:
-    if not GATEWAY_URL:
-        return (None, None)
-    url = GATEWAY_URL.rstrip("/") + "/rpc/cron/status"
-    try:
-        r = requests.get(url, headers=_gateway_headers(), timeout=2)
-        if r.status_code != 200:
-            return (False, f"http {r.status_code}")
-        j = r.json()
-        ok = j.get("ok")
-        return (bool(ok), None if ok else (j.get("error") or "cron not ok"))
+        p = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+            check=False,
+            text=True,
+        )
     except Exception as e:
-        return (False, str(e))
+        return False, None, str(e)
 
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip()[:800]
+        return False, None, f"exit {p.returncode}: {err}"
 
-def gateway_probe() -> tuple[bool, Optional[int]]:
-    """Try to hit the gateway health probe."""
-    if not GATEWAY_URL:
-        return (False, None)
-    url = GATEWAY_URL.rstrip("/") + "/rpc/probe"
-    start = time.time()
     try:
-        r = requests.get(url, headers=_gateway_headers(), timeout=2)
-        ok = r.status_code == 200
-    except Exception:
-        return (False, None)
-    latency_ms = int((time.time() - start) * 1000)
-    return (ok, latency_ms)
+        return True, json.loads(p.stdout), None
+    except Exception as e:
+        return False, None, f"json parse: {e}"
+
+
+def openclaw_status() -> tuple[bool, Optional[dict], Optional[str]]:
+    return _run_json(["openclaw", "status", "--json"], timeout=8.0)
+
+
+def openclaw_cron_status() -> tuple[Optional[bool], Optional[int], Optional[int]]:
+    ok, j, _err = _run_json(["openclaw", "cron", "status", "--json"], timeout=8.0)
+    if not ok or not isinstance(j, dict):
+        return None, None, None
+    return bool(j.get("enabled")), j.get("jobs"), j.get("nextWakeAtMs")
 
 
 def compute_status() -> Status:
     global _last_status
 
     last_restart = _read_json(RESTART_SENTINEL)
-    gw_ok, gw_latency = gateway_probe()
-    gw_ver = gateway_version()
-    cron_ok, cron_err = cron_status()
+
+    oc_ok, oc_status, oc_err = openclaw_status()
+    cron_enabled, cron_jobs, cron_next = openclaw_cron_status()
 
     st = Status(
         ts=time.time(),
-        gateway_ok=gw_ok,
-        gateway_url=GATEWAY_URL,
-        gateway_latency_ms=gw_latency,
-        gateway_version=gw_ver,
-        cron_ok=cron_ok,
-        cron_error=cron_err,
+        openclaw_ok=oc_ok,
+        openclaw_status=oc_status,
+        openclaw_error=oc_err,
+        cron_enabled=cron_enabled,
+        cron_jobs=cron_jobs,
+        cron_next_wake_at_ms=cron_next,
         last_restart=last_restart,
     )
 
@@ -150,17 +140,26 @@ def compute_status() -> Status:
 
 
 def status_loop() -> None:
-    prev_gateway_ok = None
+    prev_linked = None
     prev_restart_ts = None
 
     while True:
         st = compute_status()
 
-        if prev_gateway_ok is None or st.gateway_ok != prev_gateway_ok:
-            _emit({"type": "gateway", "ok": st.gateway_ok, "latency_ms": st.gateway_latency_ms})
-            prev_gateway_ok = st.gateway_ok
+        # Emit events on change
+        try:
+            linked = None
+            if st.openclaw_status and isinstance(st.openclaw_status, dict):
+                lc = st.openclaw_status.get("linkChannel")
+                if isinstance(lc, dict):
+                    linked = bool(lc.get("linked"))
 
-        # restart sentinel change detection
+            if linked is not None and linked != prev_linked:
+                _emit({"type": "link", "linked": linked})
+                prev_linked = linked
+        except Exception:
+            pass
+
         try:
             cur = st.last_restart or {}
             cur_ts = cur.get("ts")
@@ -170,7 +169,7 @@ def status_loop() -> None:
         except Exception:
             pass
 
-        time.sleep(2.0)
+        time.sleep(3.0)
 
 
 @app.get("/")
@@ -187,10 +186,8 @@ def api_status():
 @app.get("/api/events")
 def api_events():
     def gen():
-        # initial hello
         yield "event: hello\n"
         yield f"data: {json.dumps({'title': APP_TITLE})}\n\n"
-
         while True:
             evt = _event_bus.get()
             etype = evt.get("type", "event")
