@@ -51,6 +51,11 @@
     <div>
       <div class="title">{{ title }}</div>
       <div class="meta">Local-first OpenClaw dashboard • SSE live updates</div>
+      <div style="margin-top:8px">
+        <select id="agentSelect" style="background:transparent;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:6px 10px">
+          <option value="">All agents</option>
+        </select>
+      </div>
     </div>
     <div style="text-align:right">
       <div class="meta" id="host">—</div>
@@ -121,6 +126,9 @@
   const restartMsg = document.getElementById('restartMsg');
   const restartMeta = document.getElementById('restartMeta');
   const host = document.getElementById('host');
+  const agentSelect = document.getElementById('agentSelect');
+
+  let selectedAgent = localStorage.getItem('clawboard.agent') || '';
 
   const tGateway = document.getElementById('tGateway');
   const tGatewaySub = document.getElementById('tGatewaySub');
@@ -139,7 +147,18 @@
     try { return new Date(ts*1000).toLocaleString(); } catch { return String(ts); }
   }
 
+  function shouldShowEvent(evt) {
+    if (!selectedAgent) return true;
+    if (!evt || !evt.type) return true;
+    // Only filter session events for now.
+    if (evt.type === 'session') {
+      return (evt.session?.agentId || '') === selectedAgent;
+    }
+    return true;
+  }
+
   function renderEvent(evt, initial=false) {
+    if (!shouldShowEvent(evt)) return;
     const kind = evt.type || "event";
     let text = "";
     let meta = "";
@@ -188,8 +207,44 @@
     }
   }
 
+  function renderAgentSelect(s) {
+    if (!agentSelect) return;
+    const agents = (s.openclaw_status?.agents?.agents || []).map(a => a.id).filter(Boolean);
+
+    // If selected agent no longer exists, reset.
+    if (selectedAgent && !agents.includes(selectedAgent)) {
+      selectedAgent = '';
+      localStorage.removeItem('clawboard.agent');
+    }
+
+    const existing = new Set(Array.from(agentSelect.options).map(o => o.value));
+    for (const id of agents) {
+      if (existing.has(id)) continue;
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = id;
+      agentSelect.appendChild(opt);
+    }
+
+    agentSelect.value = selectedAgent;
+  }
+
+  function attachAgentSelectHandlers() {
+    if (!agentSelect) return;
+    agentSelect.addEventListener('change', async () => {
+      selectedAgent = agentSelect.value || '';
+      if (selectedAgent) localStorage.setItem('clawboard.agent', selectedAgent);
+      else localStorage.removeItem('clawboard.agent');
+      // Re-render from server caches
+      await refreshAll();
+    });
+  }
+
   async function boot() {
+    attachAgentSelectHandlers();
+
     const s = await fetch('/api/status').then(r=>r.json());
+    renderAgentSelect(s);
     renderStatus(s);
 
     const a = await fetch('/api/activity').then(r=>r.json());
@@ -226,7 +281,15 @@
 
   async function refreshStatusOnly() {
     const s = await fetch('/api/status').then(r=>r.json());
+    renderAgentSelect(s);
     renderStatus(s);
+  }
+
+  async function refreshAll() {
+    await refreshStatusOnly();
+    const a = await fetch('/api/activity').then(r=>r.json());
+    feed.innerHTML = '';
+    (a.events || []).forEach(evt => renderEvent(evt, true));
   }
 
   function fmtBytes(n) {
@@ -291,10 +354,25 @@
     tSecuritySub.textContent = (crit > 0) ? 'needs attention' : (warn > 0 ? 'review recommended' : 'no findings');
 
     // Sessions tile
-    const recent = ocStatus?.sessions?.recent || [];
-    tSessions.textContent = `${ocStatus?.sessions?.count ?? recent.length ?? 0}`;
+    const byAgent = ocStatus?.sessions?.byAgent || [];
+    const allRecent = ocStatus?.sessions?.recent || [];
+
+    let count = ocStatus?.sessions?.count ?? allRecent.length ?? 0;
+    let recent = allRecent;
+    if (selectedAgent) {
+      const a = byAgent.find(x => x.agentId === selectedAgent);
+      if (a) {
+        count = a.count ?? 0;
+        recent = a.recent || [];
+      } else {
+        count = 0;
+        recent = [];
+      }
+    }
+
+    tSessions.textContent = `${count}`;
     const topModel = recent?.[0]?.model;
-    tSessionsSub.textContent = topModel ? `latest model=${topModel}` : '';
+    tSessionsSub.textContent = selectedAgent ? `agent=${selectedAgent}${topModel ? ` • latest model=${topModel}` : ''}` : (topModel ? `latest model=${topModel}` : '');
 
     // Link tile
     const lc = ocStatus?.linkChannel;
