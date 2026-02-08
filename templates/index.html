@@ -34,6 +34,16 @@
     .feed-item { padding: 10px 10px; border-bottom: 1px solid var(--line); }
     .feed-item:last-child { border-bottom: none; }
     .feed-item .t { color: var(--muted); font-size: 12px; }
+
+    .tiles { display:grid; gap: 10px; grid-template-columns: repeat(4, 1fr); }
+    .tile { background: rgba(255,255,255,0.02); border:1px solid var(--line); border-radius: 12px; padding: 12px; min-height: 74px; }
+    .tile .label { color: var(--muted); font-size: 12px; }
+    .tile .value { font-size: 18px; font-weight: 650; margin-top: 6px; }
+    .tile .sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+
+    @media (max-width: 880px) {
+      .tiles { grid-template-columns: repeat(2, 1fr); }
+    }
   </style>
 </head>
 <body>
@@ -49,17 +59,52 @@
   </header>
 
   <main>
-    <section class="card span-4">
-      <div class="k">OpenClaw</div>
-      <div class="v" id="oc">—</div>
-      <div class="k mono" id="ocmeta">—</div>
-      <div class="k mono" id="cronmeta">—</div>
-    </section>
+    <section class="card span-12">
+      <div class="k">Status</div>
+      <div class="tiles" style="margin-top:10px">
+        <div class="tile">
+          <div class="label">Gateway</div>
+          <div class="value" id="tGateway">—</div>
+          <div class="sub mono" id="tGatewaySub">—</div>
+        </div>
+        <div class="tile">
+          <div class="label">Cron</div>
+          <div class="value" id="tCron">—</div>
+          <div class="sub mono" id="tCronSub">—</div>
+        </div>
+        <div class="tile">
+          <div class="label">Channels</div>
+          <div class="value" id="tChannels">—</div>
+          <div class="sub" id="tChannelsSub">—</div>
+        </div>
+        <div class="tile">
+          <div class="label">Security audit</div>
+          <div class="value" id="tSecurity">—</div>
+          <div class="sub" id="tSecuritySub">—</div>
+        </div>
 
-    <section class="card span-8">
-      <div class="k">Last restart/config apply</div>
-      <div class="v" id="restartMsg">—</div>
-      <div class="k mono" id="restartMeta">—</div>
+        <div class="tile">
+          <div class="label">Sessions</div>
+          <div class="value" id="tSessions">—</div>
+          <div class="sub" id="tSessionsSub">—</div>
+        </div>
+        <div class="tile">
+          <div class="label">Link</div>
+          <div class="value" id="tLink">—</div>
+          <div class="sub" id="tLinkSub">—</div>
+        </div>
+        <div class="tile">
+          <div class="label">Last restart/config apply</div>
+          <div class="value" id="restartMsg">—</div>
+          <div class="sub mono" id="restartMeta">—</div>
+        </div>
+        <div class="tile">
+          <div class="label">OpenClaw</div>
+          <div class="value" id="oc">—</div>
+          <div class="sub mono" id="ocmeta">—</div>
+          <div class="sub mono" id="cronmeta">—</div>
+        </div>
+      </div>
     </section>
 
     <section class="card span-12">
@@ -76,6 +121,19 @@
   const restartMsg = document.getElementById('restartMsg');
   const restartMeta = document.getElementById('restartMeta');
   const host = document.getElementById('host');
+
+  const tGateway = document.getElementById('tGateway');
+  const tGatewaySub = document.getElementById('tGatewaySub');
+  const tCron = document.getElementById('tCron');
+  const tCronSub = document.getElementById('tCronSub');
+  const tChannels = document.getElementById('tChannels');
+  const tChannelsSub = document.getElementById('tChannelsSub');
+  const tSecurity = document.getElementById('tSecurity');
+  const tSecuritySub = document.getElementById('tSecuritySub');
+  const tSessions = document.getElementById('tSessions');
+  const tSessionsSub = document.getElementById('tSessionsSub');
+  const tLink = document.getElementById('tLink');
+  const tLinkSub = document.getElementById('tLinkSub');
 
   const fmtTime = (ts) => {
     try { return new Date(ts*1000).toLocaleString(); } catch { return String(ts); }
@@ -190,23 +248,65 @@
 
   function renderStatus(s) {
     renderHost(s);
+
+    const ocStatus = s.openclaw_status || {};
+
+    // OpenClaw tile
     if (s.openclaw_ok) {
       oc.innerHTML = `<span class="pill ok">OK</span>`;
-      const link = s.openclaw_status?.linkChannel;
-      const linked = (link && link.linked !== undefined) ? link.linked : null;
-      const linkedTxt = linked === null ? '' : (linked ? 'linked' : 'unlinked');
-      ocmeta.textContent = `sessions=${s.openclaw_status?.sessions?.count ?? '?'} • ${linkedTxt}`;
+      ocmeta.textContent = `sessions=${ocStatus?.sessions?.count ?? '?'} • model=${ocStatus?.sessions?.defaults?.model ?? '?'}`;
     } else {
       oc.innerHTML = `<span class="pill bad">ERR</span>`;
       ocmeta.textContent = s.openclaw_error || 'openclaw status failed';
     }
 
+    // Gateway tile
+    const gwOk = ocStatus?.gateway?.reachable;
+    tGateway.innerHTML = gwOk ? `<span class="pill ok">OK</span>` : `<span class="pill bad">ERR</span>`;
+    const gwUrl = ocStatus?.gateway?.url || '—';
+    const gwVer = ocStatus?.gateway?.self?.version || 'unknown';
+    tGatewaySub.textContent = `${gwVer} • ${gwUrl}`;
+
+    // Cron tile
     if (s.cron_enabled === null || s.cron_enabled === undefined) {
+      tCron.textContent = '—';
+      tCronSub.textContent = '';
       cronmeta.textContent = '';
     } else {
+      tCron.textContent = s.cron_enabled ? 'on' : 'off';
+      tCronSub.textContent = `jobs=${s.cron_jobs ?? '?'} • nextWakeAtMs=${s.cron_next_wake_at_ms ?? '?'}`;
       cronmeta.textContent = `cron: ${s.cron_enabled ? 'on' : 'off'} • jobs=${s.cron_jobs ?? '?'} • nextWakeAtMs=${s.cron_next_wake_at_ms ?? '?'}`;
     }
 
+    // Channels tile (summary line is already metadata-only)
+    const cs = ocStatus?.channelSummary || [];
+    tChannels.textContent = `${cs.length || 0}`;
+    tChannelsSub.textContent = (cs || []).slice(0, 3).join(' · ');
+
+    // Security audit tile
+    const sa = ocStatus?.securityAudit?.summary || {};
+    const warn = sa.warn ?? 0;
+    const crit = sa.critical ?? 0;
+    tSecurity.textContent = (crit > 0) ? `critical ${crit}` : (warn > 0 ? `warn ${warn}` : 'clean');
+    tSecuritySub.textContent = (crit > 0) ? 'needs attention' : (warn > 0 ? 'review recommended' : 'no findings');
+
+    // Sessions tile
+    const recent = ocStatus?.sessions?.recent || [];
+    tSessions.textContent = `${ocStatus?.sessions?.count ?? recent.length ?? 0}`;
+    const topModel = recent?.[0]?.model;
+    tSessionsSub.textContent = topModel ? `latest model=${topModel}` : '';
+
+    // Link tile
+    const lc = ocStatus?.linkChannel;
+    if (lc && lc.linked !== undefined) {
+      tLink.textContent = lc.linked ? 'connected' : 'disconnected';
+      tLinkSub.textContent = `${lc.label || lc.id || ''}`;
+    } else {
+      tLink.textContent = '—';
+      tLinkSub.textContent = '';
+    }
+
+    // Restart tile
     if (s.last_restart && s.last_restart.payload) {
       restartMsg.textContent = s.last_restart.payload.message || '(no message)';
       restartMeta.textContent = JSON.stringify(s.last_restart.payload.stats || {});
