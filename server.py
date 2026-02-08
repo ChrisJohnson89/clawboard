@@ -219,17 +219,28 @@ def _safe_telegram_send_evt(args: dict) -> dict:
 
 
 def _safe_telegram_inbound_evt(text: str) -> Optional[dict]:
-    """Extract Telegram inbound metadata from bridged header text (no contents)."""
-    # Example:
-    # [Telegram Chris Johnson id:6907479327 +2m 2026-02-08 05:17 UTC] ...
+    """Extract Telegram inbound metadata from bridged header lines (no contents).
+
+    In practice, inbound Telegram often appears inside a multi-line text blob that
+    can include other lines ("System:" events, media attach notes, etc.).
+    We scan all lines and match the first Telegram header we find.
+
+    Example line:
+      [Telegram Chris Johnson id:6907479327 +2m 2026-02-08 05:17 UTC] Test
+    """
     try:
         import re
 
-        m = re.match(r"^\[Telegram\s+.*?\bid:(\-?\d+)\b.*?\]", text.strip())
-        if not m:
-            return None
-        peer_id = m.group(1)
-        return {"type": "telegram_inbound", "peerId": peer_id}
+        for line in (text or "").splitlines():
+            line = line.strip()
+            if not line.startswith("[Telegram"):
+                continue
+            m = re.match(r"^\[Telegram\s+.*?\bid:(\-?\d+)\b.*?\]", line)
+            if not m:
+                continue
+            peer_id = m.group(1)
+            return {"type": "telegram_inbound", "peerId": peer_id}
+        return None
     except Exception:
         return None
 
@@ -476,8 +487,7 @@ def telegram_tail_loop() -> None:
                                 if not isinstance(c, dict) or c.get('type') != 'text':
                                     continue
                                 t = c.get('text') or ''
-                                first = t.splitlines()[0] if t else ''
-                                evt = _safe_telegram_inbound_evt(first)
+                                evt = _safe_telegram_inbound_evt(t)
                                 if evt:
                                     evt['sessionFile'] = os.path.basename(path)
                                     evt['messageId'] = obj.get('id')
