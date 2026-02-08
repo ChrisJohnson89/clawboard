@@ -36,6 +36,10 @@ APP_TITLE = os.getenv("CLAWBOARD_TITLE", "Clawboard")
 
 OPENCLAW_TIMEOUT_SEC = float(os.getenv("CLAWBOARD_OPENCLAW_TIMEOUT", "12"))
 CRON_RUNS_LIMIT = int(os.getenv("CLAWBOARD_CRON_RUNS_LIMIT", "8"))
+STATUS_POLL_SEC = float(os.getenv("CLAWBOARD_STATUS_POLL_SEC", "5.0"))
+TELEGRAM_TAIL_POLL_SEC = float(os.getenv("CLAWBOARD_TELEGRAM_TAIL_POLL_SEC", "3.0"))
+CRON_STATUS_TTL_SEC = float(os.getenv("CLAWBOARD_CRON_STATUS_TTL_SEC", "10.0"))
+UPDATE_STATUS_TTL_SEC = float(os.getenv("CLAWBOARD_UPDATE_STATUS_TTL_SEC", "86400.0"))
 
 OPENCLAW_DIR = os.path.expanduser(os.getenv("OPENCLAW_DIR", "~/.openclaw"))
 RESTART_SENTINEL = os.path.join(OPENCLAW_DIR, "restart-sentinel.json")
@@ -81,6 +85,9 @@ _activity_cache_at: Optional[float] = None
 
 _cron_cache: Optional[dict] = None
 _cron_cache_at: Optional[float] = None
+
+_cron_status_cache: Optional[tuple[Optional[bool], Optional[int], Optional[int]]] = None
+_cron_status_cache_at: Optional[float] = None
 
 _update_last: Optional[dict] = None
 _update_last_at: Optional[float] = None
@@ -433,10 +440,15 @@ def openclaw_cron_runs(job_id: str, limit: int = CRON_RUNS_LIMIT) -> Optional[di
 
 
 def openclaw_cron_status() -> tuple[Optional[bool], Optional[int], Optional[int]]:
+    global _cron_status_cache, _cron_status_cache_at
+    if _cron_status_cache is not None and _cron_status_cache_at and (time.time() - _cron_status_cache_at) < CRON_STATUS_TTL_SEC:
+        return _cron_status_cache
     ok, j, _err = _run_json(["openclaw", "cron", "status", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
     if not ok or not isinstance(j, dict):
         return None, None, None
-    return bool(j.get("enabled")), j.get("jobs"), j.get("nextWakeAtMs")
+    _cron_status_cache = (bool(j.get("enabled")), j.get("jobs"), j.get("nextWakeAtMs"))
+    _cron_status_cache_at = time.time()
+    return _cron_status_cache
 
 
 def compute_status() -> Status:
@@ -489,7 +501,9 @@ def telegram_tail_loop() -> None:
         paths.sort(key=lambda p: os.stat(p).st_mtime if os.path.exists(p) else 0, reverse=True)
         return paths[:6]
 
+    idle_cycles = 0
     while True:
+        saw_activity = False
         try:
             for path in iter_recent_files():
                 try:
@@ -514,6 +528,7 @@ def telegram_tail_loop() -> None:
                         line = line.strip()
                         if not line:
                             continue
+                        saw_activity = True
                         try:
                             obj = json.loads(line)
                         except Exception:
@@ -555,14 +570,16 @@ def telegram_tail_loop() -> None:
         except Exception:
             pass
 
-        time.sleep(2.0)
+        if saw_activity:
+            idle_cycles = 0
+        else:
+            idle_cycles = min(idle_cycles + 1, 5)
+        time.sleep(TELEGRAM_TAIL_POLL_SEC + (idle_cycles * 0.5))
 
 
 def status_loop() -> None:
     prev_linked = None
     prev_restart_ts = None
-    prev_cron_last_run: dict[str, int] = {}
-    last_activity_refresh = 0.0
 
     while True:
         st = compute_status()
@@ -590,7 +607,7 @@ def status_loop() -> None:
         except Exception:
             pass
 
-        time.sleep(3.0)
+        time.sleep(STATUS_POLL_SEC)
 
 
 @app.get("/")
@@ -628,9 +645,12 @@ def openclaw_version() -> Optional[str]:
         return None
 
 
-def update_status(ttl_sec: float = 30.0) -> dict:
+def update_status(ttl_sec: float = UPDATE_STATUS_TTL_SEC) -> dict:
     """Return update status: current vs latest."""
-    global _last_good_openclaw_status, _last_good_at
+    global _last_good_openclaw_status, _last_good_at, _update_last, _update_last_at
+
+    if _update_last is not None and _update_last_at and (time.time() - _update_last_at) < ttl_sec:
+        return _update_last
 
     # Use cached openclaw status when available.
     oc = _last_openclaw_status_raw
@@ -647,7 +667,9 @@ def update_status(ttl_sec: float = 30.0) -> dict:
 
     current = openclaw_version()
     available = bool(latest and current and (latest != current))
-    return {"ts": time.time(), "current": current, "latest": latest, "available": available, "last": _update_last}
+    _update_last = {"ts": time.time(), "current": current, "latest": latest, "available": available, "last": _update_last}
+    _update_last_at = time.time()
+    return _update_last
 
 
 def run_update() -> dict:
