@@ -98,14 +98,15 @@
       text = JSON.stringify(evt).slice(0, 180);
     }
 
-    addFeed(kind, text, meta, initial);
+    const ts = (initial && evt.ts) ? evt.ts : (Date.now()/1000);
+    addFeed(kind, text, meta, ts);
   }
 
-  function addFeed(kind, text, meta, initial=false) {
+  function addFeed(kind, text, meta, ts) {
     const el = document.createElement('div');
     el.className = 'feed-item';
     el.innerHTML = `
-      <div class="t">${fmtTime((initial && evt.ts) ? evt.ts : (Date.now()/1000))} • ${kind}</div>
+      <div class="t">${fmtTime(ts)} • ${kind}</div>
       <div>${text}</div>
       <div class="k mono">${meta || ''}</div>
     `;
