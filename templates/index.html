@@ -67,6 +67,15 @@
     </div>
   </header>
 
+  <div style="padding: 10px 18px; border-bottom: 1px solid var(--line); background: rgba(255,255,255,0.01)">
+    <div style="display:flex; gap: 10px; align-items:center; flex-wrap: wrap;">
+      <div id="health" class="pill">—</div>
+      <div class="meta mono" id="healthMeta">—</div>
+      <div style="flex:1"></div>
+      <div class="meta mono" id="updateMeta">—</div>
+    </div>
+  </div>
+
   <main>
     <div class="layout">
       <div class="col">
@@ -162,6 +171,10 @@
   const secFindings = document.getElementById('secFindings');
   const jobsSummary = document.getElementById('jobsSummary');
   const jobsList = document.getElementById('jobsList');
+
+  const health = document.getElementById('health');
+  const healthMeta = document.getElementById('healthMeta');
+  const updateMeta = document.getElementById('updateMeta');
 
   let selectedAgent = localStorage.getItem('clawboard.agent') || '';
 
@@ -300,16 +313,22 @@
         btnUpdate.textContent = `Up to date`;
       }
 
+      if (updateMeta) {
+        updateMeta.textContent = avail ? `Update available: ${cur} → ${latest}` : `Up to date: ${cur}`;
+      }
+
       // If we have a last update result, show it in subtext (brief)
       if (u.last && u.last.status) {
         const st = u.last.status;
         tUpdateSub.textContent += ` • last=${st}`;
+        if (updateMeta) updateMeta.textContent += ` • last=${st}`;
       }
     } catch (e) {
       tUpdate.innerHTML = `<span class="pill bad">err</span>`;
       tUpdateSub.textContent = 'failed to check';
       btnUpdate.disabled = false;
       btnUpdate.textContent = 'Retry';
+      if (updateMeta) updateMeta.textContent = 'Update: check failed';
     }
   }
 
@@ -525,8 +544,31 @@
       ocmeta.textContent = s.openclaw_error || 'openclaw status failed';
     }
 
+    // Overall health (Grafana-ish)
+    const gwOk = !!ocStatus?.gateway?.reachable;
+    const cronEnabled = !!s.cron_enabled;
+    const failingJobs = (jobsSummary?.textContent || '').includes('failing=0') ? 0 : null; // best-effort (panel computes exact)
+    const saSum = ocStatus?.securityAudit?.summary || {};
+    const saCrit = saSum.critical ?? 0;
+    const saWarn = saSum.warn ?? 0;
+
+    let healthState = 'OK';
+    if (!gwOk) healthState = 'DOWN';
+    else if (saCrit > 0) healthState = 'DEGRADED';
+    else if (saWarn > 0) healthState = 'WARN';
+
+    if (health) {
+      if (healthState === 'OK') health.className = 'pill ok';
+      else if (healthState === 'WARN') health.className = 'pill warn';
+      else health.className = 'pill bad';
+      health.textContent = healthState;
+    }
+    if (healthMeta) {
+      const sess = ocStatus?.sessions?.count ?? '?';
+      healthMeta.textContent = `gateway=${gwOk ? 'ok' : 'err'} • cron=${cronEnabled ? 'on' : 'off'} • secCrit=${saCrit} • secWarn=${saWarn} • sessions=${sess}`;
+    }
+
     // Gateway tile
-    const gwOk = ocStatus?.gateway?.reachable;
     tGateway.innerHTML = gwOk ? `<span class="pill ok">OK</span>` : `<span class="pill bad">ERR</span>`;
     const gwUrl = ocStatus?.gateway?.url || '—';
     const gwVer = ocStatus?.gateway?.self?.version || 'unknown';
