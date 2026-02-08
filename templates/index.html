@@ -113,6 +113,12 @@
     </section>
 
     <section class="card span-12">
+      <div class="k">Security audit</div>
+      <div class="k" id="secSummary">—</div>
+      <div class="feed" id="secFindings" style="max-height:220px"><div class="feed-item"><div class="t">Loading</div><div>Loading security findings…</div><div class="k mono"></div></div></div>
+    </section>
+
+    <section class="card span-12">
       <div class="k">Activity</div>
       <div class="feed" id="feed"><div class="feed-item"><div class="t">Loading</div><div>Loading activity…</div><div class="k mono"></div></div></div>
     </section>
@@ -127,6 +133,8 @@
   const restartMeta = document.getElementById('restartMeta');
   const host = document.getElementById('host');
   const agentSelect = document.getElementById('agentSelect');
+  const secSummary = document.getElementById('secSummary');
+  const secFindings = document.getElementById('secFindings');
 
   let selectedAgent = localStorage.getItem('clawboard.agent') || '';
 
@@ -309,6 +317,52 @@
     host.textContent = `host: cpu ${cpu} • mem ${mem} • load1 ${load}`;
   }
 
+  function clearNode(n) {
+    if (!n) return;
+    while (n.firstChild) n.removeChild(n.firstChild);
+  }
+
+  function addFindingRow(kind, text, meta) {
+    if (!secFindings) return;
+    const el = document.createElement('div');
+    el.className = 'feed-item';
+    el.innerHTML = `
+      <div class="t">${kind}</div>
+      <div>${text}</div>
+      <div class="k mono">${meta || ''}</div>
+    `;
+    secFindings.appendChild(el);
+  }
+
+  function renderSecurityAudit(ocStatus) {
+    const summary = ocStatus?.securityAudit?.summary || {};
+    const findings = ocStatus?.securityAudit?.findings || [];
+    const crit = summary.critical ?? 0;
+    const warn = summary.warn ?? 0;
+    const info = summary.info ?? 0;
+
+    if (secSummary) {
+      secSummary.textContent = `critical=${crit} • warn=${warn} • info=${info}`;
+    }
+
+    if (!secFindings) return;
+    clearNode(secFindings);
+
+    if (!findings.length) {
+      addFindingRow('clean', 'No security audit findings', '');
+      return;
+    }
+
+    for (const f of findings) {
+      const sev = (f.severity || 'info').toUpperCase();
+      const title = f.title || f.checkId || 'finding';
+      const detail = (f.detail || '').toString().slice(0, 300);
+      const remediation = (f.remediation || '').toString().slice(0, 240);
+      const meta = [detail, remediation ? `fix: ${remediation}` : ''].filter(Boolean).join(' • ');
+      addFindingRow(sev, title, meta);
+    }
+  }
+
   function renderStatus(s) {
     renderHost(s);
 
@@ -346,12 +400,13 @@
     tChannels.textContent = `${cs.length || 0}`;
     tChannelsSub.textContent = (cs || []).slice(0, 3).join(' · ');
 
-    // Security audit tile
+    // Security audit tile + panel
     const sa = ocStatus?.securityAudit?.summary || {};
     const warn = sa.warn ?? 0;
     const crit = sa.critical ?? 0;
     tSecurity.textContent = (crit > 0) ? `critical ${crit}` : (warn > 0 ? `warn ${warn}` : 'clean');
     tSecuritySub.textContent = (crit > 0) ? 'needs attention' : (warn > 0 ? 'review recommended' : 'no findings');
+    renderSecurityAudit(ocStatus);
 
     // Sessions tile
     const byAgent = ocStatus?.sessions?.byAgent || [];
