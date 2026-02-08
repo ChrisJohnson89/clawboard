@@ -82,6 +82,9 @@ _activity_cache_at: Optional[float] = None
 _cron_cache: Optional[dict] = None
 _cron_cache_at: Optional[float] = None
 
+_update_last: Optional[dict] = None
+_update_last_at: Optional[float] = None
+
 
 def _activity_push(evt: dict) -> None:
     """Append an event to the in-memory activity cache."""
@@ -614,9 +617,84 @@ def api_activity():
     return jsonify({"events": _activity_cache, "ts": _activity_cache_at})
 
 
+def openclaw_version() -> Optional[str]:
+    try:
+        p = subprocess.run(["openclaw", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=8)
+        if p.returncode != 0:
+            return None
+        v = (p.stdout or "").strip().splitlines()[0].strip()
+        return v or None
+    except Exception:
+        return None
+
+
+def update_status(ttl_sec: float = 30.0) -> dict:
+    """Return update status: current vs latest."""
+    global _last_good_openclaw_status, _last_good_at
+
+    # Use cached openclaw status when available.
+    oc = _last_openclaw_status_raw
+    if oc is None or (_last_openclaw_status_at is None) or (time.time() - _last_openclaw_status_at) > 10:
+        ok, oc2, _err = openclaw_status()
+        if ok and isinstance(oc2, dict):
+            oc = oc2
+
+    latest = None
+    try:
+        latest = (((oc or {}).get('update') or {}).get('registry') or {}).get('latestVersion')
+    except Exception:
+        latest = None
+
+    current = openclaw_version()
+    available = bool(latest and current and (latest != current))
+    return {"ts": time.time(), "current": current, "latest": latest, "available": available, "last": _update_last}
+
+
+def run_update() -> dict:
+    """Run OpenClaw self-update (requires sudo for global npm install)."""
+    global _update_last
+
+    started = time.time()
+    out = {
+        "ts": started,
+        "status": "running",
+        "steps": [],
+    }
+    _update_last = out
+
+    def step(name: str, cmd: list[str], timeout: int = 900):
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
+        out['steps'].append({
+            'name': name,
+            'cmd': ' '.join(cmd),
+            'exitCode': p.returncode,
+            'output': (p.stdout or '')[-4000:],
+        })
+        return p.returncode == 0
+
+    ok = step('npm_install_latest', ['sudo','npm','i','-g','openclaw@latest'], timeout=1200)
+    if ok:
+        # best-effort restart
+        step('gateway_restart', ['openclaw','gateway','restart'], timeout=120)
+
+    out['status'] = 'ok' if ok else 'error'
+    out['finishedTs'] = time.time()
+    return out
+
+
 @app.get("/api/cron")
 def api_cron():
     return jsonify(cron_snapshot())
+
+
+@app.get("/api/update")
+def api_update():
+    return jsonify(update_status())
+
+
+@app.post("/api/update/run")
+def api_update_run():
+    return jsonify(run_update())
 
 
 @app.get("/api/events")

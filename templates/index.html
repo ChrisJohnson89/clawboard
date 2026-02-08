@@ -109,6 +109,15 @@
           <div class="sub mono" id="ocmeta">—</div>
           <div class="sub mono" id="cronmeta">—</div>
         </div>
+
+        <div class="tile">
+          <div class="label">Update</div>
+          <div class="value" id="tUpdate">—</div>
+          <div class="sub mono" id="tUpdateSub">—</div>
+          <div style="margin-top:8px">
+            <button id="btnUpdate" style="background:transparent;color:var(--text);border:1px solid var(--line);border-radius:10px;padding:6px 10px;cursor:pointer">Check</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -158,6 +167,9 @@
   const tSessionsSub = document.getElementById('tSessionsSub');
   const tLink = document.getElementById('tLink');
   const tLinkSub = document.getElementById('tLinkSub');
+  const tUpdate = document.getElementById('tUpdate');
+  const tUpdateSub = document.getElementById('tUpdateSub');
+  const btnUpdate = document.getElementById('btnUpdate');
 
   const fmtTime = (ts) => {
     try { return new Date(ts*1000).toLocaleString(); } catch { return String(ts); }
@@ -256,13 +268,76 @@
     });
   }
 
+  async function refreshUpdateStatus() {
+    if (!tUpdate || !tUpdateSub || !btnUpdate) return;
+    btnUpdate.disabled = true;
+    btnUpdate.textContent = 'Checking…';
+    try {
+      const u = await fetch('/api/update').then(r=>r.json());
+      const cur = u.current || 'unknown';
+      const latest = u.latest || 'unknown';
+      const avail = !!u.available;
+
+      if (avail) {
+        tUpdate.innerHTML = `<span class="pill warn">update</span>`;
+        tUpdateSub.textContent = `${cur} → ${latest}`;
+        btnUpdate.disabled = false;
+        btnUpdate.textContent = `Update`;
+      } else {
+        tUpdate.innerHTML = `<span class="pill ok">ok</span>`;
+        tUpdateSub.textContent = `${cur}`;
+        btnUpdate.disabled = true;
+        btnUpdate.textContent = `Up to date`;
+      }
+
+      // If we have a last update result, show it in subtext (brief)
+      if (u.last && u.last.status) {
+        const st = u.last.status;
+        tUpdateSub.textContent += ` • last=${st}`;
+      }
+    } catch (e) {
+      tUpdate.innerHTML = `<span class="pill bad">err</span>`;
+      tUpdateSub.textContent = 'failed to check';
+      btnUpdate.disabled = false;
+      btnUpdate.textContent = 'Retry';
+    }
+  }
+
+  function attachUpdateHandlers() {
+    if (!btnUpdate) return;
+    btnUpdate.addEventListener('click', async () => {
+      // If button is in Up to date state, do nothing.
+      if (btnUpdate.disabled) return;
+
+      const ok = confirm('Update OpenClaw to latest and restart the gateway? This will briefly interrupt the bot.');
+      if (!ok) return;
+
+      btnUpdate.disabled = true;
+      btnUpdate.textContent = 'Updating…';
+      tUpdateSub.textContent = 'running…';
+
+      try {
+        await fetch('/api/update/run', { method: 'POST' }).then(r=>r.json());
+      } catch (e) {
+        // ignore
+      }
+
+      // Re-check status after update
+      await new Promise(r => setTimeout(r, 1500));
+      await refreshUpdateStatus();
+      await refreshStatusOnly();
+    });
+  }
+
   async function boot() {
     attachAgentSelectHandlers();
+    attachUpdateHandlers();
 
     const s = await fetch('/api/status').then(r=>r.json());
     renderAgentSelect(s);
     renderStatus(s);
 
+    await refreshUpdateStatus();
     await refreshJobs();
 
     const a = await fetch('/api/activity').then(r=>r.json());
@@ -306,6 +381,7 @@
 
   async function refreshAll() {
     await refreshStatusOnly();
+    await refreshUpdateStatus();
     const a = await fetch('/api/activity').then(r=>r.json());
     feed.innerHTML = '';
     (a.events || []).forEach(evt => renderEvent(evt, true));
