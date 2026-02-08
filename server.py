@@ -30,6 +30,8 @@ from typing import Any, Dict, Optional
 
 from flask import Flask, Response, jsonify, render_template
 
+import requests
+
 APP_TITLE = os.getenv("CLAWBOARD_TITLE", "Clawboard")
 
 OPENCLAW_TIMEOUT_SEC = float(os.getenv("CLAWBOARD_OPENCLAW_TIMEOUT", "12"))
@@ -37,6 +39,13 @@ CRON_RUNS_LIMIT = int(os.getenv("CLAWBOARD_CRON_RUNS_LIMIT", "8"))
 
 OPENCLAW_DIR = os.path.expanduser(os.getenv("OPENCLAW_DIR", "~/.openclaw"))
 RESTART_SENTINEL = os.path.join(OPENCLAW_DIR, "restart-sentinel.json")
+
+# Public repos to show commit activity for (metadata only)
+REPO_ACTIVITY = [
+    ("ChrisJohnson89", "clawboard"),
+    ("ChrisJohnson89", "Ferromon"),
+    ("ChrisJohnson89", "openclaw-configs"),
+]
 
 app = Flask(__name__)
 
@@ -160,6 +169,29 @@ def recent_sessions_activity(limit: int = 8) -> list[dict]:
         return []
 
 
+
+
+def github_recent_commits(owner: str, repo: str, limit: int = 5) -> list[dict]:
+    """Fetch recent commits from GitHub (public API). Metadata only."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/commits"
+    try:
+        r = requests.get(url, params={"per_page": str(limit)}, timeout=4)
+        if r.status_code != 200:
+            return []
+        data = r.json()
+        out=[]
+        for c in data[:limit]:
+            sha = (c.get("sha") or "")[:7]
+            commit = (c.get("commit") or {})
+            msg = (commit.get("message") or "").splitlines()[0][:120]
+            author = ((commit.get("author") or {}).get("name"))
+            date = ((commit.get("author") or {}).get("date"))
+            out.append({"sha": sha, "message": msg, "author": author, "date": date, "url": c.get("html_url")})
+        return out
+    except Exception:
+        return []
+
+
 def backfill_events() -> list[dict]:
     """Generate a short initial activity list (metadata only)."""
     ev=[]
@@ -189,6 +221,20 @@ def backfill_events() -> list[dict]:
             "ts": time.time(),
             "session": r,
         })
+    # Repo commits (metadata only)
+    for owner, repo in REPO_ACTIVITY:
+        for c in github_recent_commits(owner, repo, limit=3):
+            ev.append({
+                "type": "repo_commit",
+                "repo": f"{owner}/{repo}",
+                "sha": c.get("sha"),
+                "message": c.get("message"),
+                "author": c.get("author"),
+                "date": c.get("date"),
+                "url": c.get("url"),
+                "ts": time.time(),
+            })
+
     # Restart sentinel
     rs=_read_json(RESTART_SENTINEL)
     if rs:

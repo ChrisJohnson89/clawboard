@@ -90,6 +90,9 @@
       meta = JSON.stringify(evt.payload?.payload?.stats || evt.payload?.stats || {});
     } else if (kind === "link") {
       text = evt.linked ? "Link channel connected" : "Link channel disconnected";
+    } else if (kind === "repo_commit") {
+      text = `${evt.repo} ${evt.sha}`;
+      meta = `${evt.message || ""} (${evt.author || ""})`;
     } else if (kind === "session") {
       const s = evt.session || {};
       text = `Session updated: ${s.key || "?"}`;
