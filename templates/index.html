@@ -44,6 +44,8 @@
     .tile .label { color: var(--muted); font-size: 12px; }
     .tile .value { font-size: 18px; font-weight: 650; margin-top: 6px; }
     .tile .sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .spark { width: 100%; height: 26px; margin-top: 8px; }
+    .spark polyline { fill: none; stroke: rgba(88,166,255,0.9); stroke-width: 2; }
 
     @media (max-width: 880px) {
       .tiles { grid-template-columns: repeat(2, 1fr); }
@@ -94,6 +96,14 @@
           <div class="value" id="tGateway">—</div>
           <div class="sub mono" id="tGatewaySub">—</div>
         </div>
+        <div class="tile">
+          <div class="label">Host sparklines (cpu/mem/load1)</div>
+          <div class="sub mono" id="sparkMeta">—</div>
+          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spCpu" points=""/></svg>
+          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spMem" points=""/></svg>
+          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spLoad" points=""/></svg>
+        </div>
+
         <div class="tile">
           <div class="label">Cron</div>
           <div class="value" id="tCron">—</div>
@@ -180,6 +190,10 @@
 
   const tGateway = document.getElementById('tGateway');
   const tGatewaySub = document.getElementById('tGatewaySub');
+  const sparkMeta = document.getElementById('sparkMeta');
+  const spCpu = document.getElementById('spCpu');
+  const spMem = document.getElementById('spMem');
+  const spLoad = document.getElementById('spLoad');
   const tCron = document.getElementById('tCron');
   const tCronSub = document.getElementById('tCronSub');
   const tChannels = document.getElementById('tChannels');
@@ -196,6 +210,32 @@
 
   const fmtTime = (ts) => {
     try { return new Date(ts*1000).toLocaleString(); } catch { return String(ts); }
+  }
+
+  // --- sparklines ---
+  const MAX_SAMPLES = 60;
+  const cpuSeries = [];
+  const memSeries = [];
+  const loadSeries = [];
+
+  function pushSeries(arr, v) {
+    if (v === null || v === undefined || Number.isNaN(v)) return;
+    arr.push(v);
+    while (arr.length > MAX_SAMPLES) arr.shift();
+  }
+
+  function renderSpark(poly, series) {
+    if (!poly || !series || series.length < 2) return;
+    const min = Math.min(...series);
+    const max = Math.max(...series);
+    const span = (max - min) || 1;
+    const n = series.length;
+    const pts = series.map((v,i) => {
+      const x = (i/(n-1))*100;
+      const y = 28 - ((v - min)/span)*26; // 2..28
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(' ');
+    poly.setAttribute('points', pts);
   }
 
   function shouldShowEvent(evt) {
@@ -431,6 +471,22 @@
     const mem = (s.host_mem_used_bytes && s.host_mem_total_bytes) ? `${fmtBytes(s.host_mem_used_bytes)} / ${fmtBytes(s.host_mem_total_bytes)}` : '—';
     const load = (s.host_load1 === null || s.host_load1 === undefined) ? '—' : s.host_load1.toFixed(2);
     host.textContent = `host: cpu ${cpu} • mem ${mem} • load1 ${load}`;
+
+    // sparklines
+    pushSeries(cpuSeries, s.host_cpu_pct);
+    if (s.host_mem_used_bytes && s.host_mem_total_bytes) {
+      pushSeries(memSeries, (s.host_mem_used_bytes / s.host_mem_total_bytes) * 100.0);
+    }
+    pushSeries(loadSeries, s.host_load1);
+
+    renderSpark(spCpu, cpuSeries);
+    renderSpark(spMem, memSeries);
+    renderSpark(spLoad, loadSeries);
+
+    if (sparkMeta) {
+      const memPct = (s.host_mem_used_bytes && s.host_mem_total_bytes) ? ((s.host_mem_used_bytes / s.host_mem_total_bytes) * 100).toFixed(0) + '%' : '—';
+      sparkMeta.textContent = `cpu=${cpu} • mem=${memPct} • load1=${load}`;
+    }
   }
 
   function clearNode(n) {
@@ -642,6 +698,13 @@
   setInterval(()=>{
     document.getElementById('clock').textContent = new Date().toLocaleString();
   }, 1000);
+
+  // Periodic sampling for sparklines + status (keeps the dashboard feeling "alive")
+  setInterval(async ()=>{
+    await refreshStatusOnly();
+    // Keep update status reasonably fresh
+    await refreshUpdateStatus();
+  }, 5000);
 
   boot();
 </script>
