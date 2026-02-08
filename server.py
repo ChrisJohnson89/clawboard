@@ -123,6 +123,70 @@ def openclaw_cron_list() -> Optional[dict]:
     return j
 
 
+
+
+def recent_sessions_activity(limit: int = 8) -> list[dict]:
+    """Return recent session metadata (no message contents)."""
+    try:
+        ok, j, err = _run_json(["openclaw", "status", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
+        if not ok or not isinstance(j, dict):
+            return []
+        recent = (((j.get("sessions") or {}).get("recent")) or [])
+        out=[]
+        for r in recent[:limit]:
+            out.append({
+                "kind": r.get("kind"),
+                "key": r.get("key"),
+                "updatedAt": r.get("updatedAt"),
+                "agentId": r.get("agentId"),
+                "totalTokens": r.get("totalTokens"),
+                "model": r.get("model"),
+                "flags": r.get("flags"),
+            })
+        return out
+    except Exception:
+        return []
+
+
+def backfill_events() -> list[dict]:
+    """Generate a short initial activity list (metadata only)."""
+    ev=[]
+    # Recent cron runs (last 2 per job)
+    cl = openclaw_cron_list() or {}
+    jobs = cl.get("jobs") or []
+    for job in jobs:
+        jid = job.get("id")
+        if not jid:
+            continue
+        runs = openclaw_cron_runs(jid, limit=2) or {}
+        for entry in (runs.get("entries") or []):
+            ev.append({
+                "type": "cron_run",
+                "jobId": jid,
+                "jobName": job.get("name"),
+                "status": entry.get("status"),
+                "summary": entry.get("summary"),
+                "runAtMs": entry.get("runAtMs"),
+                "durationMs": entry.get("durationMs"),
+                "ts": (entry.get("ts") or time.time()),
+            })
+    # Recent sessions (metadata only)
+    for r in recent_sessions_activity(limit=6):
+        ev.append({
+            "type": "session",
+            "ts": time.time(),
+            "session": r,
+        })
+    # Restart sentinel
+    rs=_read_json(RESTART_SENTINEL)
+    if rs:
+        ev.append({"type":"restart","ts":time.time(),"payload":rs})
+
+    # Sort newest-ish
+    ev.sort(key=lambda x: x.get("runAtMs") or x.get("ts") or 0, reverse=True)
+    return ev[:20]
+
+
 def openclaw_cron_runs(job_id: str, limit: int = CRON_RUNS_LIMIT) -> Optional[dict]:
     ok, j, _err = _run_json(["openclaw", "cron", "runs", "--id", job_id, "--limit", str(limit)], timeout=OPENCLAW_TIMEOUT_SEC)
     if not ok or not isinstance(j, dict):
@@ -203,6 +267,11 @@ def index():
 def api_status():
     st = _last_status or compute_status()
     return jsonify(asdict(st))
+
+
+@app.get("/api/activity")
+def api_activity():
+    return jsonify({"events": backfill_events()})
 
 
 @app.get("/api/events")

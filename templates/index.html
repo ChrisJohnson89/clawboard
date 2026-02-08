@@ -77,11 +77,35 @@
     try { return new Date(ts*1000).toLocaleString(); } catch { return String(ts); }
   }
 
-  function addFeed(kind, text, meta) {
+  function renderEvent(evt, initial=false) {
+    const kind = evt.type || "event";
+    let text = "";
+    let meta = "";
+
+    if (kind === "cron_run") {
+      text = `${evt.jobName || evt.jobId} → ${evt.status || "unknown"}`;
+      meta = evt.summary || "";
+    } else if (kind === "restart") {
+      text = evt.payload?.payload?.message || evt.payload?.message || "restart/config";
+      meta = JSON.stringify(evt.payload?.payload?.stats || evt.payload?.stats || {});
+    } else if (kind === "link") {
+      text = evt.linked ? "Link channel connected" : "Link channel disconnected";
+    } else if (kind === "session") {
+      const s = evt.session || {};
+      text = `Session updated: ${s.key || "?"}`;
+      meta = `model=${s.model || "?"} tokens=${s.totalTokens ?? "?"}`;
+    } else {
+      text = JSON.stringify(evt).slice(0, 180);
+    }
+
+    addFeed(kind, text, meta, initial);
+  }
+
+  function addFeed(kind, text, meta, initial=false) {
     const el = document.createElement('div');
     el.className = 'feed-item';
     el.innerHTML = `
-      <div class="t">${fmtTime(Date.now()/1000)} • ${kind}</div>
+      <div class="t">${fmtTime((initial && evt.ts) ? evt.ts : (Date.now()/1000))} • ${kind}</div>
       <div>${text}</div>
       <div class="k mono">${meta || ''}</div>
     `;
@@ -92,23 +116,26 @@
     const s = await fetch('/api/status').then(r=>r.json());
     renderStatus(s);
 
+    const a = await fetch('/api/activity').then(r=>r.json());
+    (a.events || []).forEach(evt => renderEvent(evt, true));
+
     const es = new EventSource('/api/events');
     es.addEventListener('link', (e) => {
       const d = JSON.parse(e.data);
-      addFeed('link', d.linked ? 'Link channel connected' : 'Link channel disconnected', '');
+      renderEvent(d);
       refresh();
     });
     es.addEventListener('cron_run', (e) => {
       const d = JSON.parse(e.data);
       const txt = `${d.jobName || d.jobId} → ${d.status || 'unknown'}`;
-      addFeed('cron', txt, d.summary || '');
+      renderEvent(d);
       refresh();
     });
     
     es.addEventListener('restart', (e) => {
       const d = JSON.parse(e.data);
       const msg = d.payload?.message || 'Restart/config apply';
-      addFeed('restart', msg, JSON.stringify(d.payload || {}));
+      renderEvent(d);
       refresh();
     });
   }
@@ -116,6 +143,9 @@
   async function refresh() {
     const s = await fetch('/api/status').then(r=>r.json());
     renderStatus(s);
+
+    const a = await fetch('/api/activity').then(r=>r.json());
+    (a.events || []).forEach(evt => renderEvent(evt, true));
   }
 
   function renderStatus(s) {
