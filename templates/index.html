@@ -42,7 +42,10 @@
       <div class="title">{{ title }}</div>
       <div class="meta">Local-first OpenClaw dashboard • SSE live updates</div>
     </div>
-    <div class="meta" id="clock">—</div>
+    <div style="text-align:right">
+      <div class="meta" id="host">—</div>
+      <div class="meta" id="clock">—</div>
+    </div>
   </header>
 
   <main>
@@ -72,6 +75,7 @@
   const cronmeta = document.getElementById('cronmeta');
   const restartMsg = document.getElementById('restartMsg');
   const restartMeta = document.getElementById('restartMeta');
+  const host = document.getElementById('host');
 
   const fmtTime = (ts) => {
     try { return new Date(ts*1000).toLocaleString(); } catch { return String(ts); }
@@ -97,6 +101,12 @@
       const s = evt.session || {};
       text = `Session updated: ${s.key || "?"}`;
       meta = `model=${s.model || "?"} tokens=${s.totalTokens ?? "?"}`;
+    } else if (kind === "telegram_send") {
+      text = `Telegram send → ${evt.target || "?"}`;
+      meta = `voice=${evt.asVoice ? 'yes' : 'no'} media=${evt.hasPath ? (evt.filename || 'yes') : 'no'}`;
+    } else if (kind === "telegram_inbound") {
+      text = `Telegram inbound ← ${evt.peerId || "?"}`;
+      meta = '';
     } else {
       text = JSON.stringify(evt).slice(0, 180);
     }
@@ -144,6 +154,15 @@
       renderEvent(d);
       refresh();
     });
+
+    es.addEventListener('telegram_send', (e) => {
+      const d = JSON.parse(e.data);
+      renderEvent(d);
+    });
+    es.addEventListener('telegram_inbound', (e) => {
+      const d = JSON.parse(e.data);
+      renderEvent(d);
+    });
   }
 
   async function refresh() {
@@ -156,8 +175,26 @@
     (a.events || []).forEach(evt => renderEvent(evt, true));
   }
 
+  function fmtBytes(n) {
+    if (n === null || n === undefined) return '—';
+    const units = ['B','KB','MB','GB','TB'];
+    let x = n;
+    let i = 0;
+    while (x >= 1024 && i < units.length-1) { x /= 1024; i++; }
+    return `${x.toFixed(i===0?0:1)}${units[i]}`;
+  }
+
+  function renderHost(s) {
+    if (!host) return;
+    const cpu = (s.host_cpu_pct === null || s.host_cpu_pct === undefined) ? '—' : `${s.host_cpu_pct.toFixed(0)}%`;
+    const mem = (s.host_mem_used_bytes && s.host_mem_total_bytes) ? `${fmtBytes(s.host_mem_used_bytes)} / ${fmtBytes(s.host_mem_total_bytes)}` : '—';
+    const load = (s.host_load1 === null || s.host_load1 === undefined) ? '—' : s.host_load1.toFixed(2);
+    host.textContent = `host: cpu ${cpu} • mem ${mem} • load1 ${load}`;
+  }
+
   function renderStatus(s) {
     if (s.openclaw_ok) {
+    renderHost(s);
       oc.innerHTML = `<span class="pill ok">OK</span>`;
       const link = s.openclaw_status?.linkChannel;
       const linked = (link && link.linked !== undefined) ? link.linked : null;

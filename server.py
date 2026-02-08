@@ -62,6 +62,11 @@ class Status:
     cron_jobs: Optional[int]
     cron_next_wake_at_ms: Optional[int]
 
+    host_cpu_pct: Optional[float]
+    host_mem_used_bytes: Optional[int]
+    host_mem_total_bytes: Optional[int]
+    host_load1: Optional[float]
+
     last_restart: Optional[Dict[str, Any]]
 
 
@@ -75,9 +80,24 @@ _activity_cache: list[dict] = []
 _activity_cache_at: Optional[float] = None
 
 
+def _activity_push(evt: dict) -> None:
+    """Append an event to the in-memory activity cache."""
+    global _activity_cache, _activity_cache_at
+    _activity_cache.insert(0, evt)
+    _activity_cache = _activity_cache[:60]
+    _activity_cache_at = time.time()
+
+
 def _emit(evt: dict) -> None:
     evt = dict(evt)
     evt.setdefault("ts", time.time())
+
+    # Keep a rolling cache so UI reloads don't lose the last few events.
+    try:
+        _activity_push(evt)
+    except Exception:
+        pass
+
     try:
         _event_bus.put_nowait(evt)
     except queue.Full:
@@ -121,6 +141,97 @@ def _run_json(cmd: list[str], timeout: float = OPENCLAW_TIMEOUT_SEC) -> tuple[bo
         return True, json.loads(p.stdout), None
     except Exception as e:
         return False, None, f"json parse: {e}"
+
+
+def host_health() -> tuple[Optional[float], Optional[int], Optional[int], Optional[float]]:
+    """Return (cpu_pct, mem_used_bytes, mem_total_bytes, load1).
+
+    Implemented without external deps (psutil), using /proc + os.getloadavg.
+    """
+    # CPU % by sampling /proc/stat deltas
+    cpu_pct: Optional[float] = None
+    try:
+        def read_cpu():
+            with open("/proc/stat", "r", encoding="utf-8") as f:
+                line = f.readline()
+            parts = line.split()
+            if len(parts) < 5 or parts[0] != "cpu":
+                return None
+            vals = [int(x) for x in parts[1:]]
+            total = sum(vals)
+            idle = vals[3] + (vals[4] if len(vals) > 4 else 0)
+            return total, idle
+
+        a = read_cpu()
+        time.sleep(0.10)
+        b = read_cpu()
+        if a and b:
+            totald = b[0] - a[0]
+            idled = b[1] - a[1]
+            if totald > 0:
+                cpu_pct = max(0.0, min(100.0, (1.0 - (idled / totald)) * 100.0))
+    except Exception:
+        cpu_pct = None
+
+    # Memory from /proc/meminfo
+    mem_used: Optional[int] = None
+    mem_total: Optional[int] = None
+    try:
+        info: dict[str, int] = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                if ":" not in line:
+                    continue
+                k, rest = line.split(":", 1)
+                parts = rest.strip().split()
+                if not parts:
+                    continue
+                v = int(parts[0])
+                # Values are kB
+                info[k] = v * 1024
+        mem_total = info.get("MemTotal")
+        mem_avail = info.get("MemAvailable")
+        if mem_total is not None and mem_avail is not None:
+            mem_used = mem_total - mem_avail
+    except Exception:
+        mem_used, mem_total = None, None
+
+    load1: Optional[float] = None
+    try:
+        load1 = float(os.getloadavg()[0])
+    except Exception:
+        load1 = None
+
+    return cpu_pct, mem_used, mem_total, load1
+
+
+def _safe_telegram_send_evt(args: dict) -> dict:
+    """Redact content-bearing fields from message tool calls."""
+    return {
+        "type": "telegram_send",
+        "channel": args.get("channel"),
+        "action": args.get("action"),
+        "target": args.get("target"),
+        "asVoice": (bool(args.get("asVoice")) if args.get("asVoice") is not None else None),
+        "hasPath": bool(args.get("path")),
+        "filename": (os.path.basename(args.get("path")) if args.get("path") else None),
+    }
+
+
+def _safe_telegram_inbound_evt(text: str) -> Optional[dict]:
+    """Extract Telegram inbound metadata from bridged header text (no contents)."""
+    # Example:
+    # [Telegram Chris Johnson id:6907479327 +2m 2026-02-08 05:17 UTC] ...
+    try:
+        import re
+
+        m = re.match(r"^\[Telegram\s+.*?\bid:(\-?\d+)\b.*?\]", text.strip())
+        if not m:
+            return None
+        peer_id = m.group(1)
+        return {"type": "telegram_inbound", "peerId": peer_id}
+    except Exception:
+        return None
 
 
 def openclaw_status() -> tuple[bool, Optional[dict], Optional[str]]:
@@ -267,6 +378,8 @@ def compute_status() -> Status:
     oc_ok, oc_status, oc_err = openclaw_status()
     cron_enabled, cron_jobs, cron_next = openclaw_cron_status()
 
+    cpu_pct, mem_used, mem_total, load1 = host_health()
+
     st = Status(
         ts=time.time(),
         openclaw_ok=oc_ok,
@@ -275,11 +388,106 @@ def compute_status() -> Status:
         cron_enabled=cron_enabled,
         cron_jobs=cron_jobs,
         cron_next_wake_at_ms=cron_next,
+        host_cpu_pct=cpu_pct,
+        host_mem_used_bytes=mem_used,
+        host_mem_total_bytes=mem_total,
+        host_load1=load1,
         last_restart=last_restart,
     )
 
     _last_status = st
     return st
+
+
+
+
+def telegram_tail_loop() -> None:
+    """Tail recent session .jsonl logs and emit Telegram metadata events.
+
+    This is best-effort and intentionally content-blind:
+    - Outbound: detects tool calls to `message` with channel=telegram.
+    - Inbound: detects bridged header lines like "[Telegram ... id:123] ...".
+    """
+    sessions_dir = os.path.join(OPENCLAW_DIR, 'agents', 'main', 'sessions')
+    offsets: dict[str, int] = {}
+
+    def iter_recent_files():
+        try:
+            paths = [os.path.join(sessions_dir, f) for f in os.listdir(sessions_dir) if f.endswith('.jsonl')]
+        except Exception:
+            return []
+        # Prefer most recently modified
+        paths.sort(key=lambda p: os.stat(p).st_mtime if os.path.exists(p) else 0, reverse=True)
+        return paths[:6]
+
+    while True:
+        try:
+            for path in iter_recent_files():
+                try:
+                    st = os.stat(path)
+                except Exception:
+                    continue
+
+                if path not in offsets:
+                    # Start tailing from EOF (we rely on /api/activity backfill for history)
+                    offsets[path] = st.st_size
+                off = offsets.get(path, 0)
+                # If file rotated/truncated
+                if off > st.st_size:
+                    off = 0
+
+                if st.st_size <= off:
+                    continue
+
+                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                    f.seek(off)
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                        except Exception:
+                            continue
+
+                        if obj.get('type') != 'message':
+                            continue
+                        msg = obj.get('message') or {}
+                        role = msg.get('role')
+
+                        # outbound telegram sends via message tool
+                        if role == 'assistant':
+                            for c in (msg.get('content') or []):
+                                if not isinstance(c, dict) or c.get('type') != 'toolCall':
+                                    continue
+                                if c.get('name') != 'message':
+                                    continue
+                                args = (c.get('arguments') or {})
+                                if args.get('channel') != 'telegram':
+                                    continue
+                                evt = _safe_telegram_send_evt(args)
+                                evt['sessionFile'] = os.path.basename(path)
+                                evt['toolCallId'] = c.get('id')
+                                _emit(evt)
+
+                        # inbound bridged telegram headers (no content)
+                        if role == 'user':
+                            for c in (msg.get('content') or []):
+                                if not isinstance(c, dict) or c.get('type') != 'text':
+                                    continue
+                                t = c.get('text') or ''
+                                first = t.splitlines()[0] if t else ''
+                                evt = _safe_telegram_inbound_evt(first)
+                                if evt:
+                                    evt['sessionFile'] = os.path.basename(path)
+                                    evt['messageId'] = obj.get('id')
+                                    _emit(evt)
+
+                    offsets[path] = f.tell()
+        except Exception:
+            pass
+
+        time.sleep(2.0)
 
 
 def status_loop() -> None:
@@ -357,5 +565,6 @@ def api_events():
 
 if __name__ == "__main__":
     threading.Thread(target=status_loop, daemon=True).start()
+    threading.Thread(target=telegram_tail_loop, daemon=True).start()
     port = int(os.getenv("PORT", "3333"))
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
