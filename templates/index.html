@@ -119,6 +119,12 @@
     </section>
 
     <section class="card span-12">
+      <div class="k">Jobs</div>
+      <div class="k" id="jobsSummary">—</div>
+      <div class="feed" id="jobsList" style="max-height:260px"><div class="feed-item"><div class="t">Loading</div><div>Loading jobs…</div><div class="k mono"></div></div></div>
+    </section>
+
+    <section class="card span-12">
       <div class="k">Activity</div>
       <div class="feed" id="feed"><div class="feed-item"><div class="t">Loading</div><div>Loading activity…</div><div class="k mono"></div></div></div>
     </section>
@@ -135,6 +141,8 @@
   const agentSelect = document.getElementById('agentSelect');
   const secSummary = document.getElementById('secSummary');
   const secFindings = document.getElementById('secFindings');
+  const jobsSummary = document.getElementById('jobsSummary');
+  const jobsList = document.getElementById('jobsList');
 
   let selectedAgent = localStorage.getItem('clawboard.agent') || '';
 
@@ -255,6 +263,8 @@
     renderAgentSelect(s);
     renderStatus(s);
 
+    await refreshJobs();
+
     const a = await fetch('/api/activity').then(r=>r.json());
     feed.innerHTML = '';
     (a.events || []).forEach(evt => renderEvent(evt, true));
@@ -269,6 +279,7 @@
       const d = JSON.parse(e.data);
       renderEvent(d);
       await refreshStatusOnly();
+      await refreshJobs();
     });
     
     es.addEventListener('restart', async (e) => {
@@ -360,6 +371,57 @@
       const remediation = (f.remediation || '').toString().slice(0, 240);
       const meta = [detail, remediation ? `fix: ${remediation}` : ''].filter(Boolean).join(' • ');
       addFindingRow(sev, title, meta);
+    }
+  }
+
+  function addJobRow(kind, text, meta) {
+    if (!jobsList) return;
+    const el = document.createElement('div');
+    el.className = 'feed-item';
+    el.innerHTML = `
+      <div class="t">${kind}</div>
+      <div>${text}</div>
+      <div class="k mono">${meta || ''}</div>
+    `;
+    jobsList.appendChild(el);
+  }
+
+  function renderJobs(data) {
+    if (!data) return;
+    const jobs = data.jobs || [];
+    const enabled = jobs.filter(j => j.enabled).length;
+    const failing = jobs.filter(j => ['error','failed','fail'].includes(((j.last?.status)||'').toLowerCase())).length;
+    if (jobsSummary) {
+      jobsSummary.textContent = `jobs=${jobs.length} • enabled=${enabled} • failing=${failing}`;
+    }
+
+    if (!jobsList) return;
+    clearNode(jobsList);
+
+    if (!jobs.length) {
+      addJobRow('none', 'No cron jobs', '');
+      return;
+    }
+
+    for (const j of jobs) {
+      const name = j.name || j.id;
+      const last = j.last || {};
+      const st = (last.status || '—').toString();
+      const runAt = last.runAtMs ? new Date(last.runAtMs).toLocaleString() : '—';
+      const dur = (last.durationMs !== undefined && last.durationMs !== null) ? `${last.durationMs}ms` : '';
+      const summary = (last.summary || '').toString().slice(0, 180);
+      const kind = (j.enabled ? 'ENABLED' : 'DISABLED') + ' • ' + st;
+      const meta = [`last=${runAt}`, dur, summary].filter(Boolean).join(' • ');
+      addJobRow(kind, name, meta);
+    }
+  }
+
+  async function refreshJobs() {
+    try {
+      const j = await fetch('/api/cron').then(r=>r.json());
+      renderJobs(j);
+    } catch (e) {
+      if (jobsSummary) jobsSummary.textContent = 'jobs: failed to load';
     }
   }
 

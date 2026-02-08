@@ -79,6 +79,9 @@ _last_openclaw_status_at: Optional[float] = None
 _activity_cache: list[dict] = []
 _activity_cache_at: Optional[float] = None
 
+_cron_cache: Optional[dict] = None
+_cron_cache_at: Optional[float] = None
+
 
 def _activity_push(evt: dict) -> None:
     """Append an event to the in-memory activity cache."""
@@ -265,6 +268,58 @@ def openclaw_cron_list() -> Optional[dict]:
         return None
     return j
 
+
+
+def cron_snapshot(ttl_sec: float = 15.0) -> dict:
+    """Return cron jobs + last run metadata (cached)."""
+    global _cron_cache, _cron_cache_at
+
+    if _cron_cache is not None and _cron_cache_at and (time.time() - _cron_cache_at) < ttl_sec:
+        return _cron_cache
+
+    out: dict = {"ts": time.time(), "jobs": []}
+    cl = openclaw_cron_list() or {}
+    jobs = cl.get("jobs") or []
+
+    for job in jobs:
+        jid = job.get("id")
+        if not jid:
+            continue
+        runs = openclaw_cron_runs(jid, limit=1) or {}
+        last = None
+        entries = runs.get("entries") or []
+        if entries:
+            e = entries[0] or {}
+            last = {
+                "status": e.get("status"),
+                "summary": e.get("summary"),
+                "runAtMs": e.get("runAtMs"),
+                "durationMs": e.get("durationMs"),
+                "ts": e.get("ts"),
+            }
+        out["jobs"].append({
+            "id": jid,
+            "name": job.get("name"),
+            "enabled": bool(job.get("enabled", True)),
+            "schedule": job.get("schedule"),
+            "deliver": job.get("deliver"),
+            "last": last,
+        })
+
+    # Sort: enabled first, then failing, then next-ish by last run time
+    def sort_key(j):
+        enabled = 1 if j.get('enabled') else 0
+        last = j.get('last') or {}
+        status = (last.get('status') or '').lower()
+        failing = 1 if status in ('error','failed','fail') else 0
+        last_ms = last.get('runAtMs') or 0
+        return (-enabled, -failing, -last_ms)
+
+    out["jobs"].sort(key=sort_key)
+
+    _cron_cache = out
+    _cron_cache_at = time.time()
+    return out
 
 
 
@@ -557,6 +612,11 @@ def api_activity():
         except Exception:
             pass
     return jsonify({"events": _activity_cache, "ts": _activity_cache_at})
+
+
+@app.get("/api/cron")
+def api_cron():
+    return jsonify(cron_snapshot())
 
 
 @app.get("/api/events")
