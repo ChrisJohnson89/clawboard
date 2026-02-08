@@ -62,6 +62,8 @@ _last_good_openclaw_status: Optional[dict] = None
 _last_good_at: Optional[float] = None
 _last_openclaw_status_raw: Optional[dict] = None
 _last_openclaw_status_at: Optional[float] = None
+_activity_cache: list[dict] = []
+_activity_cache_at: Optional[float] = None
 
 
 def _emit(evt: dict) -> None:
@@ -238,6 +240,7 @@ def status_loop() -> None:
     prev_linked = None
     prev_restart_ts = None
     prev_cron_last_run: dict[str, int] = {}
+    last_activity_refresh = 0.0
 
     while True:
         st = compute_status()
@@ -281,7 +284,15 @@ def api_status():
 
 @app.get("/api/activity")
 def api_activity():
-    return jsonify({"events": backfill_events()})
+    global _activity_cache, _activity_cache_at
+    if not _activity_cache:
+        # Best-effort immediate backfill (may be slow on first request)
+        try:
+            _activity_cache = backfill_events()
+            _activity_cache_at = time.time()
+        except Exception:
+            pass
+    return jsonify({"events": _activity_cache, "ts": _activity_cache_at})
 
 
 @app.get("/api/events")

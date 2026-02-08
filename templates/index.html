@@ -61,7 +61,7 @@
 
     <section class="card span-12">
       <div class="k">Activity</div>
-      <div class="feed" id="feed"></div>
+      <div class="feed" id="feed"><div class="feed-item"><div class="t">Loading</div><div>Loading activity…</div><div class="k mono"></div></div></div>
     </section>
   </main>
 
@@ -118,6 +118,8 @@
     renderStatus(s);
 
     const a = await fetch('/api/activity').then(r=>r.json());
+    feed.innerHTML = '';
+    feed.innerHTML = '';
     (a.events || []).forEach(evt => renderEvent(evt, true));
 
     const es = new EventSource('/api/events');
@@ -146,6 +148,8 @@
     renderStatus(s);
 
     const a = await fetch('/api/activity').then(r=>r.json());
+    feed.innerHTML = '';
+    feed.innerHTML = '';
     (a.events || []).forEach(evt => renderEvent(evt, true));
   }
 
