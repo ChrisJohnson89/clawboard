@@ -112,10 +112,10 @@
     }
 
     const ts = (initial && evt.ts) ? evt.ts : (Date.now()/1000);
-    addFeed(kind, text, meta, ts);
+    addFeed(kind, text, meta, ts, initial);
   }
 
-  function addFeed(kind, text, meta, ts) {
+  function addFeed(kind, text, meta, ts, initial=false) {
     const el = document.createElement('div');
     el.className = 'feed-item';
     el.innerHTML = `
@@ -123,7 +123,11 @@
       <div>${text}</div>
       <div class="k mono">${meta || ''}</div>
     `;
-    feed.prepend(el);
+    if (initial) {
+      feed.append(el);
+    } else {
+      feed.prepend(el);
+    }
   }
 
   async function boot() {
@@ -132,27 +136,24 @@
 
     const a = await fetch('/api/activity').then(r=>r.json());
     feed.innerHTML = '';
-    feed.innerHTML = '';
     (a.events || []).forEach(evt => renderEvent(evt, true));
 
     const es = new EventSource('/api/events');
-    es.addEventListener('link', (e) => {
+    es.addEventListener('link', async (e) => {
       const d = JSON.parse(e.data);
       renderEvent(d);
-      refresh();
+      await refreshStatusOnly();
     });
-    es.addEventListener('cron_run', (e) => {
+    es.addEventListener('cron_run', async (e) => {
       const d = JSON.parse(e.data);
-      const txt = `${d.jobName || d.jobId} → ${d.status || 'unknown'}`;
       renderEvent(d);
-      refresh();
+      await refreshStatusOnly();
     });
     
-    es.addEventListener('restart', (e) => {
+    es.addEventListener('restart', async (e) => {
       const d = JSON.parse(e.data);
-      const msg = d.payload?.message || 'Restart/config apply';
       renderEvent(d);
-      refresh();
+      await refreshStatusOnly();
     });
 
     es.addEventListener('telegram_send', (e) => {
@@ -165,14 +166,9 @@
     });
   }
 
-  async function refresh() {
+  async function refreshStatusOnly() {
     const s = await fetch('/api/status').then(r=>r.json());
     renderStatus(s);
-
-    const a = await fetch('/api/activity').then(r=>r.json());
-    feed.innerHTML = '';
-    feed.innerHTML = '';
-    (a.events || []).forEach(evt => renderEvent(evt, true));
   }
 
   function fmtBytes(n) {
@@ -193,8 +189,8 @@
   }
 
   function renderStatus(s) {
-    if (s.openclaw_ok) {
     renderHost(s);
+    if (s.openclaw_ok) {
       oc.innerHTML = `<span class="pill ok">OK</span>`;
       const link = s.openclaw_status?.linkChannel;
       const linked = (link && link.linked !== undefined) ? link.linked : null;
