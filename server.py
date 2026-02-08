@@ -60,6 +60,8 @@ _event_bus: "queue.Queue[dict]" = queue.Queue(maxsize=500)
 _last_status: Optional[Status] = None
 _last_good_openclaw_status: Optional[dict] = None
 _last_good_at: Optional[float] = None
+_last_openclaw_status_raw: Optional[dict] = None
+_last_openclaw_status_at: Optional[float] = None
 
 
 def _emit(evt: dict) -> None:
@@ -111,7 +113,15 @@ def _run_json(cmd: list[str], timeout: float = OPENCLAW_TIMEOUT_SEC) -> tuple[bo
 
 
 def openclaw_status() -> tuple[bool, Optional[dict], Optional[str]]:
-    return _run_json(["openclaw", "status", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
+    global _last_openclaw_status_raw, _last_openclaw_status_at
+    # cache for a few seconds so /api/activity doesn't block
+    if _last_openclaw_status_raw is not None and _last_openclaw_status_at and (time.time() - _last_openclaw_status_at) < 5:
+        return True, _last_openclaw_status_raw, None
+    ok, j, err = _run_json(["openclaw", "status", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
+    if ok and isinstance(j, dict):
+        _last_openclaw_status_raw = j
+        _last_openclaw_status_at = time.time()
+    return ok, j, err
 
 
 
@@ -128,8 +138,8 @@ def openclaw_cron_list() -> Optional[dict]:
 def recent_sessions_activity(limit: int = 8) -> list[dict]:
     """Return recent session metadata (no message contents)."""
     try:
-        ok, j, err = _run_json(["openclaw", "status", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
-        if not ok or not isinstance(j, dict):
+        j = _last_good_openclaw_status
+        if not j or not isinstance(j, dict):
             return []
         recent = (((j.get("sessions") or {}).get("recent")) or [])
         out=[]
