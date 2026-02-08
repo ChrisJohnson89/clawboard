@@ -19,11 +19,15 @@
     header { padding: 16px 18px; border-bottom: 1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
     header .title { font-weight: 700; letter-spacing: 0.2px; }
     header .meta { color: var(--muted); font-size: 12px; }
-    main { padding: 18px; display:grid; gap: 14px; grid-template-columns: repeat(12, 1fr); }
+    main { padding: 18px; }
+    .layout { display:grid; gap: 14px; grid-template-columns: 2fr 1fr; align-items:start; }
+    .col { display:grid; gap: 14px; }
+
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
-    .span-4 { grid-column: span 4; }
-    .span-8 { grid-column: span 8; }
-    .span-12 { grid-column: span 12; }
+
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+    }
     .k { color: var(--muted); font-size: 12px; }
     .v { font-size: 18px; font-weight: 650; }
     .pill { display:inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border:1px solid var(--line); }
@@ -64,9 +68,18 @@
   </header>
 
   <main>
-    <section class="card span-12">
-      <div class="k">Status</div>
-      <div class="tiles" style="margin-top:10px">
+    <div class="layout">
+      <div class="col">
+        <section class="card">
+          <div class="k">Timeline</div>
+          <div class="feed" id="feed"><div class="feed-item"><div class="t">Loading</div><div>Loading activity…</div><div class="k mono"></div></div></div>
+        </section>
+      </div>
+
+      <div class="col">
+        <section class="card">
+          <div class="k">Now</div>
+          <div class="tiles" style="margin-top:10px">
         <div class="tile">
           <div class="label">Gateway</div>
           <div class="value" id="tGateway">—</div>
@@ -119,24 +132,21 @@
           </div>
         </div>
       </div>
-    </section>
+        </section>
 
-    <section class="card span-12">
-      <div class="k">Security audit</div>
-      <div class="k" id="secSummary">—</div>
-      <div class="feed" id="secFindings" style="max-height:220px"><div class="feed-item"><div class="t">Loading</div><div>Loading security findings…</div><div class="k mono"></div></div></div>
-    </section>
+        <section class="card">
+          <div class="k">Security audit</div>
+          <div class="k" id="secSummary">—</div>
+          <div class="feed" id="secFindings" style="max-height:220px"><div class="feed-item"><div class="t">Loading</div><div>Loading security findings…</div><div class="k mono"></div></div></div>
+        </section>
 
-    <section class="card span-12">
-      <div class="k">Jobs</div>
-      <div class="k" id="jobsSummary">—</div>
-      <div class="feed" id="jobsList" style="max-height:260px"><div class="feed-item"><div class="t">Loading</div><div>Loading jobs…</div><div class="k mono"></div></div></div>
-    </section>
-
-    <section class="card span-12">
-      <div class="k">Activity</div>
-      <div class="feed" id="feed"><div class="feed-item"><div class="t">Loading</div><div>Loading activity…</div><div class="k mono"></div></div></div>
-    </section>
+        <section class="card">
+          <div class="k">Jobs</div>
+          <div class="k" id="jobsSummary">—</div>
+          <div class="feed" id="jobsList" style="max-height:260px"><div class="feed-item"><div class="t">Loading</div><div>Loading jobs…</div><div class="k mono"></div></div></div>
+        </section>
+      </div>
+    </div>
   </main>
 
 <script>
