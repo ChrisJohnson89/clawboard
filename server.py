@@ -86,6 +86,9 @@ _deps_cache: dict | None = None
 _deps_cache_at: float | None = None
 _deps_lock = threading.Lock()
 
+
+_devices_cache: dict | None = None
+_devices_cache_at: float | None = None
 _last_status: Optional[Status] = None
 _last_good_openclaw_status: Optional[dict] = None
 _last_good_at: Optional[float] = None
@@ -366,6 +369,35 @@ def openclaw_status() -> tuple[bool, Optional[dict], Optional[str]]:
 
 def openclaw_cron_list() -> Optional[dict]:
     ok, j, _err = _run_json(["openclaw", "cron", "list", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
+
+def openclaw_devices_list() -> Optional[dict]:
+    ok, j, _err = _run_json(["openclaw", "devices", "list", "--json"], timeout=OPENCLAW_TIMEOUT_SEC)
+    if not ok or not isinstance(j, dict):
+        return None
+    return j
+
+
+def devices_snapshot(ttl_sec: float = 60.0, force: bool = False) -> dict:
+    """Return devices pending/paired snapshot (cached)."""
+    global _devices_cache, _devices_cache_at
+    now = time.time()
+    with _deps_lock:  # reuse deps lock to keep it simple; low contention
+        if (not force) and _devices_cache is not None and _devices_cache_at and (now - _devices_cache_at) < ttl_sec:
+            return _devices_cache
+
+    j = openclaw_devices_list() or {}
+    out = {
+        "ts": now,
+        "pending": j.get("pending") or [],
+        "paired": j.get("paired") or [],
+    }
+    with _deps_lock:
+        _devices_cache = out
+        _devices_cache_at = now
+    return out
+
+
+
     if not ok or not isinstance(j, dict):
         return None
     return j
@@ -669,6 +701,56 @@ def telegram_tail_loop() -> None:
         time.sleep(TELEGRAM_TAIL_POLL_SEC + (idle_cycles * 0.5))
 
 
+def devices_loop() -> None:
+    prev_pending = None
+    prev_paired = None
+
+    while True:
+        try:
+            with _client_lock:
+                active = _clients_connected > 0 and (time.time() - _last_client_at) < 90
+
+            if not active:
+                time.sleep(60.0)
+                continue
+
+            snap = devices_snapshot(force=True)
+            pending = len(snap.get('pending') or [])
+            paired = len(snap.get('paired') or [])
+
+            if prev_pending is not None:
+                if prev_pending == 0 and pending > 0:
+                    # include first requestId if present
+                    rid = None
+                    try:
+                        rid = (snap.get('pending') or [])[0].get('requestId')
+                    except Exception:
+                        rid = None
+                    _emit({"type": "pairing_pending", "pending": pending, "requestId": rid})
+                if prev_pending > 0 and pending == 0:
+                    _emit({"type": "pairing_cleared", "pending": 0})
+
+            if prev_paired is not None and paired > prev_paired:
+                # best-effort: surface the newest paired device
+                newest = None
+                try:
+                    newest = sorted((snap.get('paired') or []), key=lambda d: d.get('approvedAtMs') or 0)[-1]
+                except Exception:
+                    newest = None
+                _emit({
+                    "type": "device_paired",
+                    "delta": paired - prev_paired,
+                    "clientId": (newest or {}).get('clientId'),
+                    "platform": (newest or {}).get('platform'),
+                })
+
+            prev_pending = pending
+            prev_paired = paired
+            time.sleep(float(os.getenv('CLAWBOARD_DEVICES_POLL_SEC','30.0')))
+        except Exception:
+            time.sleep(30.0)
+
+
 def deps_loop() -> None:
     while True:
         try:
@@ -834,6 +916,10 @@ def run_update() -> dict:
     global _update_last, _update_cache, _update_cache_at
 
     started = time.time()
+    try:
+        _emit({"type":"update_run","status":"started"})
+    except Exception:
+        pass
     out = {
         "ts": started,
         "status": "running",
@@ -860,6 +946,10 @@ def run_update() -> dict:
         step('gateway_restart', ['openclaw','gateway','restart'], timeout=120)
 
     out['status'] = 'ok' if ok else 'error'
+    try:
+        _emit({"type":"update_run","status":out['status'],"summary": out['steps'][-1]['name'] if out.get('steps') else ''})
+    except Exception:
+        pass
     out['finishedTs'] = time.time()
     return out
 
@@ -921,6 +1011,7 @@ def api_events():
 if __name__ == "__main__":
     threading.Thread(target=status_loop, daemon=True).start()
     threading.Thread(target=cron_loop, daemon=True).start()
+    threading.Thread(target=devices_loop, daemon=True).start()
     threading.Thread(target=deps_loop, daemon=True).start()
     threading.Thread(target=activity_loop, daemon=True).start()
     threading.Thread(target=telegram_tail_loop, daemon=True).start()
