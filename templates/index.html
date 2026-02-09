@@ -101,19 +101,20 @@
 
       <div class="col">
         <section class="card">
+          <div class="k">Host sparklines</div>
+          <div class="sub mono" id="sparkMeta">—</div>
+          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spCpu" points=""/></svg>
+          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spMem" points=""/></svg>
+          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spLoad" points=""/></svg>
+        </section>
+
+        <section class="card">
           <div class="k">Now</div>
           <div class="tiles" style="margin-top:10px">
         <div class="tile">
           <div class="label">Gateway</div>
           <div class="value" id="tGateway">—</div>
           <div class="sub mono" id="tGatewaySub">—</div>
-        </div>
-        <div class="tile">
-          <div class="label">Host sparklines (cpu/mem/load1)</div>
-          <div class="sub mono" id="sparkMeta">—</div>
-          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spCpu" points=""/></svg>
-          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spMem" points=""/></svg>
-          <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><polyline id="spLoad" points=""/></svg>
         </div>
 
         <div class="tile">
