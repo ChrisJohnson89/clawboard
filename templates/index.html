@@ -417,19 +417,22 @@
     es.addEventListener('link', async (e) => {
       const d = JSON.parse(e.data);
       renderEvent(d);
-      await refreshStatusOnly();
     });
     es.addEventListener('cron_run', async (e) => {
       const d = JSON.parse(e.data);
       renderEvent(d);
-      await refreshStatusOnly();
       await refreshJobs();
     });
     
     es.addEventListener('restart', async (e) => {
       const d = JSON.parse(e.data);
       renderEvent(d);
-      await refreshStatusOnly();
+    });
+
+    es.addEventListener('status', (e) => {
+      const d = JSON.parse(e.data);
+      const st = d.status || d;
+      renderStatus(st);
     });
 
     es.addEventListener('telegram_send', (e) => {
@@ -699,12 +702,30 @@
     document.getElementById('clock').textContent = new Date().toLocaleString();
   }, 1000);
 
-  // Periodic sampling for sparklines + status (keeps the dashboard feeling "alive")
-  setInterval(async ()=>{
-    await refreshStatusOnly();
-    // Keep update status reasonably fresh
-    await refreshUpdateStatus();
-  }, 5000);
+  // Poll ONLY host metrics (cheap) for sparklines.
+  // Avoid polling /api/status or /api/update: those trigger expensive OpenClaw CLI work.
+  async function refreshHostOnly() {
+    try {
+      const h = await fetch('/api/host').then(r=>r.json());
+      renderHost({
+        host_cpu_pct: h.cpu_pct,
+        host_mem_used_bytes: h.mem_used_bytes,
+        host_mem_total_bytes: h.mem_total_bytes,
+        host_load1: h.load1,
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  setInterval(refreshHostOnly, 5000);
+
+  // Update check: only when page opens or becomes visible again.
+  document.addEventListener('visibilitychange', async () => {
+    if (document.visibilityState === 'visible') {
+      await refreshUpdateStatus();
+    }
+  });
 
   boot();
 </script>

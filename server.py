@@ -36,7 +36,7 @@ APP_TITLE = os.getenv("CLAWBOARD_TITLE", "Clawboard")
 
 OPENCLAW_TIMEOUT_SEC = float(os.getenv("CLAWBOARD_OPENCLAW_TIMEOUT", "12"))
 CRON_RUNS_LIMIT = int(os.getenv("CLAWBOARD_CRON_RUNS_LIMIT", "8"))
-STATUS_POLL_SEC = float(os.getenv("CLAWBOARD_STATUS_POLL_SEC", "5.0"))
+STATUS_POLL_SEC = float(os.getenv("CLAWBOARD_STATUS_POLL_SEC", "10.0"))
 TELEGRAM_TAIL_POLL_SEC = float(os.getenv("CLAWBOARD_TELEGRAM_TAIL_POLL_SEC", "3.0"))
 CRON_STATUS_TTL_SEC = float(os.getenv("CLAWBOARD_CRON_STATUS_TTL_SEC", "10.0"))
 
@@ -90,6 +90,8 @@ _cron_status_cache_at: Optional[float] = None
 
 _update_last: Optional[dict] = None
 _update_last_at: Optional[float] = None
+_update_cache: Optional[dict] = None
+_update_cache_at: Optional[float] = None
 
 
 def _activity_push(evt: dict) -> None:
@@ -583,6 +585,12 @@ def status_loop() -> None:
     while True:
         st = compute_status()
 
+        # Always emit status snapshots so clients don't need to poll /api/status.
+        try:
+            _emit({"type": "status", "status": asdict(st)})
+        except Exception:
+            pass
+
         # Emit events on change
         try:
             linked = None
@@ -644,13 +652,19 @@ def openclaw_version() -> Optional[str]:
         return None
 
 
-def update_status(ttl_sec: float = 30.0) -> dict:
-    """Return update status: current vs latest."""
-    global _last_good_openclaw_status, _last_good_at
+def update_status(ttl_sec: float = 600.0) -> dict:
+    """Return update status: current vs latest (cached).
+
+    This endpoint must be cheap: the UI may call it on page load/visibility changes.
+    """
+    global _update_cache, _update_cache_at
+
+    if _update_cache is not None and _update_cache_at and (time.time() - _update_cache_at) < ttl_sec:
+        return _update_cache
 
     # Use cached openclaw status when available.
     oc = _last_openclaw_status_raw
-    if oc is None or (_last_openclaw_status_at is None) or (time.time() - _last_openclaw_status_at) > 10:
+    if oc is None or (_last_openclaw_status_at is None) or (time.time() - _last_openclaw_status_at) > 30:
         ok, oc2, _err = openclaw_status()
         if ok and isinstance(oc2, dict):
             oc = oc2
@@ -663,12 +677,14 @@ def update_status(ttl_sec: float = 30.0) -> dict:
 
     current = openclaw_version()
     available = bool(latest and current and (latest != current))
-    return {"ts": time.time(), "current": current, "latest": latest, "available": available, "last": _update_last}
+    _update_cache = {"ts": time.time(), "current": current, "latest": latest, "available": available, "last": _update_last}
+    _update_cache_at = time.time()
+    return _update_cache
 
 
 def run_update() -> dict:
     """Run OpenClaw self-update (requires sudo for global npm install)."""
-    global _update_last
+    global _update_last, _update_cache, _update_cache_at
 
     started = time.time()
     out = {
@@ -677,6 +693,9 @@ def run_update() -> dict:
         "steps": [],
     }
     _update_last = out
+    # Invalidate cached update status
+    _update_cache = None
+    _update_cache_at = None
 
     def step(name: str, cmd: list[str], timeout: int = 900):
         p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
@@ -711,6 +730,18 @@ def api_update():
 @app.post("/api/update/run")
 def api_update_run():
     return jsonify(run_update())
+
+
+@app.get("/api/host")
+def api_host():
+    cpu_pct, mem_used, mem_total, load1 = host_health()
+    return jsonify({
+        "ts": time.time(),
+        "cpu_pct": cpu_pct,
+        "mem_used_bytes": mem_used,
+        "mem_total_bytes": mem_total,
+        "load1": load1,
+    })
 
 
 @app.get("/api/events")
