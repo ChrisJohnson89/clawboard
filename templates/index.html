@@ -144,11 +144,6 @@
           <div class="sub" id="tLinkSub">—</div>
         </div>
         <div class="tile">
-          <div class="label">Last restart/config apply</div>
-          <div class="value" id="restartMsg">—</div>
-          <div class="sub mono" id="restartMeta">—</div>
-        </div>
-        <div class="tile">
           <div class="label">OpenClaw</div>
           <div class="value" id="oc">—</div>
           <div class="sub mono" id="ocmeta">—</div>
@@ -175,8 +170,6 @@
   const oc = document.getElementById('oc');
   const ocmeta = document.getElementById('ocmeta');
   const cronmeta = document.getElementById('cronmeta');
-  const restartMsg = document.getElementById('restartMsg');
-  const restartMeta = document.getElementById('restartMeta');
   const host = document.getElementById('host');
   const agentSelect = document.getElementById('agentSelect');
   const secSummary = document.getElementById('secSummary');
@@ -695,14 +688,6 @@
       tLinkSub.textContent = '';
     }
 
-    // Restart tile
-    if (s.last_restart && s.last_restart.payload) {
-      restartMsg.textContent = s.last_restart.payload.message || '(no message)';
-      restartMeta.textContent = JSON.stringify(s.last_restart.payload.stats || {});
-    } else {
-      restartMsg.textContent = '—';
-      restartMeta.textContent = '—';
-    }
   }
 
   setInterval(()=>{
