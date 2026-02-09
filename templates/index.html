@@ -20,7 +20,7 @@
     header .title { font-weight: 700; letter-spacing: 0.2px; }
     header .meta { color: var(--muted); font-size: 12px; }
     main { padding: 18px; }
-    .layout { display:grid; gap: 14px; grid-template-columns: 2fr 1fr; align-items:start; }
+    .layout { display:grid; gap: 14px; grid-template-columns: 1.25fr 1fr; align-items:start; }
     .col { display:grid; gap: 14px; }
 
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
@@ -83,7 +83,7 @@
       <div class="col">
         <section class="card">
           <div class="k">Timeline</div>
-          <div class="feed" id="feed"><div class="feed-item"><div class="t">Loading</div><div>Loading activity…</div><div class="k mono"></div></div></div>
+          <div class="feed" id="feed" style="max-height:360px"><div class="feed-item"><div class="t">Loading</div><div>Loading activity…</div><div class="k mono"></div></div></div>
         </section>
       </div>
 
