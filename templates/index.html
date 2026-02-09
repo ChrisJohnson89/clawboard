@@ -40,11 +40,12 @@
     .feed-item:last-child { border-bottom: none; }
     .feed-item .t { color: var(--muted); font-size: 12px; }
 
-    .tiles { display:grid; gap: 10px; grid-template-columns: repeat(4, 1fr); }
-    .tile { background: rgba(255,255,255,0.02); border:1px solid var(--line); border-radius: 12px; padding: 12px; min-height: 74px; min-width:0; }
+    .tiles { display:grid; gap: 10px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .tile { background: rgba(255,255,255,0.02); border:1px solid var(--line); border-radius: 12px; padding: 12px; min-height: 74px; min-width:0; overflow:hidden; }
     .tile .label { color: var(--muted); font-size: 12px; }
     .tile .value { font-size: 18px; font-weight: 650; margin-top: 6px; }
-    .tile .sub { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    .tile .sub { color: var(--muted); font-size: 12px; margin-top: 6px; overflow-wrap:anywhere; word-break:break-word; }
+    .tile .sub.mono { font-size: 11px; }
     .spark { display:block; width: 100%; aspect-ratio: 100 / 30; height: auto; max-height: 36px; margin-top: 8px; }
     .spark polyline { fill: none; stroke: rgba(88,166,255,0.9); stroke-width: 2; vector-effect: non-scaling-stroke; }
 
