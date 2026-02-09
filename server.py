@@ -33,7 +33,7 @@ from flask import Flask, Response, jsonify, render_template
 
 import requests
 
-APP_TITLE = os.getenv("CLAWBOARD_TITLE", "Clawboard")
+APP_TITLE = os.getenv("CLAWBOARD_TITLE", "ClawSentry")
 
 OPENCLAW_TIMEOUT_SEC = float(os.getenv("CLAWBOARD_OPENCLAW_TIMEOUT", "12"))
 CRON_RUNS_LIMIT = int(os.getenv("CLAWBOARD_CRON_RUNS_LIMIT", "8"))
