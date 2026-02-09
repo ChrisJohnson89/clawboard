@@ -23,6 +23,7 @@ import json
 import os
 import queue
 import subprocess
+import socket
 import threading
 import time
 from dataclasses import asdict, dataclass
@@ -78,6 +79,13 @@ _clients_connected: int = 0
 _last_client_at: float = 0.0
 _client_lock = threading.Lock()
 
+_activity_times: "dict[str, list[float]]" = {}  # event type -> timestamps
+_activity_lock = threading.Lock()
+
+_deps_cache: dict | None = None
+_deps_cache_at: float | None = None
+_deps_lock = threading.Lock()
+
 _last_status: Optional[Status] = None
 _last_good_openclaw_status: Optional[dict] = None
 _last_good_at: Optional[float] = None
@@ -106,9 +114,53 @@ def _activity_push(evt: dict) -> None:
     _activity_cache_at = time.time()
 
 
+def _activity_record(evt_type: str, ts: float) -> None:
+    # keep ~10 minutes of timestamps
+    with _activity_lock:
+        arr = _activity_times.setdefault(evt_type, [])
+        arr.append(ts)
+        cutoff = ts - 600.0
+        # prune in place
+        i = 0
+        while i < len(arr) and arr[i] < cutoff:
+            i += 1
+        if i:
+            del arr[:i]
+
+
+def activity_stats(window_sec: float = 300.0) -> dict:
+    now = time.time()
+    cutoff = now - window_sec
+    total = 0
+    last_ts = None
+    by_type = {}
+    with _activity_lock:
+        for t, arr in _activity_times.items():
+            # arr already pruned to 10m; count in window
+            n = 0
+            for x in reversed(arr):
+                if x < cutoff:
+                    break
+                n += 1
+            if n:
+                by_type[t] = n
+                total += n
+            if arr:
+                last_ts = max(last_ts or 0, arr[-1])
+    per_min = (total / (window_sec / 60.0)) if window_sec > 0 else 0.0
+    return {"ts": now, "windowSec": window_sec, "events": total, "perMin": per_min, "byType": by_type, "lastEventTs": last_ts}
+
+
 def _emit(evt: dict) -> None:
     evt = dict(evt)
     evt.setdefault("ts", time.time())
+
+    # Update activity rate counters (ignore high-frequency snapshots)
+    try:
+        if evt.get("type") and evt.get("type") != "status":
+            _activity_record(str(evt.get("type")), float(evt.get("ts") or time.time()))
+    except Exception:
+        pass
 
     # Keep a rolling cache so UI reloads don't lose the last few events.
     # NOTE: exclude high-frequency snapshots (e.g. status) to avoid flooding the Activity feed.
@@ -161,6 +213,39 @@ def _run_json(cmd: list[str], timeout: float = OPENCLAW_TIMEOUT_SEC) -> tuple[bo
         return True, json.loads(p.stdout), None
     except Exception as e:
         return False, None, f"json parse: {e}"
+
+
+def _tcp_check(host: str, port: int = 443, timeout: float = 2.0) -> dict:
+    t0 = time.time()
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            pass
+        return {"host": host, "ok": True, "ms": int((time.time()-t0)*1000)}
+    except Exception as e:
+        return {"host": host, "ok": False, "ms": int((time.time()-t0)*1000), "error": str(e)[:200]}
+
+
+def deps_status(ttl_sec: float = 60.0, force: bool = False) -> dict:
+    global _deps_cache, _deps_cache_at
+    now = time.time()
+    with _deps_lock:
+        if (not force) and _deps_cache is not None and _deps_cache_at and (now - _deps_cache_at) < ttl_sec:
+            return _deps_cache
+
+    hosts = os.getenv('CLAWBOARD_DEPS_HOSTS', 'api.elevenlabs.io,slack.com,github.com').split(',')
+    checks = []
+    ok = 0
+    for h in [x.strip() for x in hosts if x.strip()]:
+        r = _tcp_check(h)
+        checks.append(r)
+        if r.get('ok'):
+            ok += 1
+
+    out = {"ts": now, "ok": ok, "total": len(checks), "checks": checks}
+    with _deps_lock:
+        _deps_cache = out
+        _deps_cache_at = now
+    return out
 
 
 def host_health() -> tuple[Optional[float], Optional[int], Optional[int], Optional[float]]:
@@ -584,6 +669,36 @@ def telegram_tail_loop() -> None:
         time.sleep(TELEGRAM_TAIL_POLL_SEC + (idle_cycles * 0.5))
 
 
+def deps_loop() -> None:
+    while True:
+        try:
+            with _client_lock:
+                active = _clients_connected > 0 and (time.time() - _last_client_at) < 90
+            if active:
+                d = deps_status(force=True)
+                _emit({"type": "deps", "deps": d})
+                time.sleep(float(os.getenv("CLAWBOARD_DEPS_POLL_SEC", "60.0")))
+            else:
+                time.sleep(float(os.getenv("CLAWBOARD_DEPS_IDLE_POLL_SEC", "300.0")))
+        except Exception:
+            time.sleep(60.0)
+
+
+def activity_loop() -> None:
+    while True:
+        try:
+            with _client_lock:
+                active = _clients_connected > 0 and (time.time() - _last_client_at) < 90
+            if active:
+                a = activity_stats(window_sec=float(os.getenv('CLAWBOARD_ACTIVITY_WINDOW_SEC','300')))
+                _emit({"type": "activity", "activity": a})
+                time.sleep(float(os.getenv("CLAWBOARD_ACTIVITY_POLL_SEC", "10.0")))
+            else:
+                time.sleep(60.0)
+        except Exception:
+            time.sleep(30.0)
+
+
 def cron_loop() -> None:
     """Refresh cron snapshot in background (avoid expensive per-request work)."""
     while True:
@@ -806,6 +921,8 @@ def api_events():
 if __name__ == "__main__":
     threading.Thread(target=status_loop, daemon=True).start()
     threading.Thread(target=cron_loop, daemon=True).start()
+    threading.Thread(target=deps_loop, daemon=True).start()
+    threading.Thread(target=activity_loop, daemon=True).start()
     threading.Thread(target=telegram_tail_loop, daemon=True).start()
     port = int(os.getenv("PORT", "3333"))
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)

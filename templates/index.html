@@ -21,6 +21,7 @@
     header .meta { color: var(--muted); font-size: 12px; }
     main { padding: 18px; }
     .layout { display:grid; gap: 14px; grid-template-columns: 1.25fr 1fr; align-items:start; }
+    .toprow { display:grid; gap: 14px; grid-template-columns: 1fr 1fr; align-items:stretch; }
     .col { display:grid; gap: 14px; }
 
     .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
@@ -100,12 +101,27 @@
       </div>
 
       <div class="col">
+        <div class="toprow">
         <section class="card">
           <div class="k">Host sparklines</div>
           <div class="sub mono" id="sparkMeta">—</div>
           <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="xMidYMid meet"><polyline id="spCpu" points=""/></svg>
           <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="xMidYMid meet"><polyline id="spMem" points=""/></svg>
           <svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="xMidYMid meet"><polyline id="spLoad" points=""/></svg>
+        </section>
+
+        <section class="card">
+          <div class="k">Activity</div>
+          <div class="value" id="actPerMin">—</div>
+          <div class="sub mono" id="actMeta">—</div>
+          <div class="feed" id="actBreakdown" style="max-height:120px"></div>
+        </section>
+      </div>
+
+        <section class="card">
+          <div class="k">Dependencies</div>
+          <div class="k" id="depsSummary">—</div>
+          <div class="feed" id="depsList" style="max-height:180px"></div>
         </section>
 
         <section class="card">
@@ -411,7 +427,30 @@
     feed.innerHTML = '';
     (a.events || []).forEach(evt => renderEvent(evt, true));
 
-    const es = new EventSource('/api/events');
+    function renderActivity(a) {
+    if (!a) return;
+    if (actPerMin) actPerMin.textContent = `${(a.perMin || 0).toFixed(1)}/min`;
+    if (actMeta) actMeta.textContent = `events=${a.events ?? 0} • window=${Math.round((a.windowSec||0)/60)}m • last=${a.lastEventTs ? fmtTime(a.lastEventTs) : '—'}`;
+    if (actBreakdown) {
+      const items = Object.entries(a.byType || {}).sort((x,y)=>y[1]-x[1]).slice(0,6);
+      actBreakdown.innerHTML = items.map(([k,v])=>`<div class="feed-item"><div class="t">${k}</div><div>${v}</div></div>`).join('') || '<div class="k">—</div>';
+    }
+  }
+
+  function renderDeps(d) {
+    if (!d) return;
+    if (depsSummary) depsSummary.textContent = `${d.ok ?? 0}/${d.total ?? 0} ok`;
+    if (depsList) {
+      const checks = d.checks || [];
+      depsList.innerHTML = checks.map(c=>{
+        const pill = c.ok ? '<span class="pill ok">OK</span>' : '<span class="pill bad">ERR</span>';
+        const err = c.ok ? '' : ` • ${c.error || 'fail'}`;
+        return `<div class="feed-item"><div class="t">${pill} ${c.host}</div><div class="k mono">${c.ms}ms${err}</div></div>`;
+      }).join('') || '<div class="k">—</div>';
+    }
+  }
+
+const es = new EventSource('/api/events');
     es.addEventListener('link', async (e) => {
       const d = JSON.parse(e.data);
       renderEvent(d);
@@ -437,6 +476,14 @@
       const d = JSON.parse(e.data);
       renderEvent(d);
     });
+  es.addEventListener('activity', (ev)=>{
+    try { const j = JSON.parse(ev.data||'{}'); renderActivity(j.activity); } catch {}
+  });
+
+  es.addEventListener('deps', (ev)=>{
+    try { const j = JSON.parse(ev.data||'{}'); renderDeps(j.deps); } catch {}
+  });
+
     es.addEventListener('telegram_inbound', (e) => {
       const d = JSON.parse(e.data);
       renderEvent(d);
