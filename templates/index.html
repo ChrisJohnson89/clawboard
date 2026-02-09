@@ -649,17 +649,19 @@
       cronmeta.textContent = `cron: ${s.cron_enabled ? 'on' : 'off'} • jobs=${s.cron_jobs ?? '?'} • nextWakeAtMs=${s.cron_next_wake_at_ms ?? '?'}`;
     }
 
-    // Channels tile (summary line is already metadata-only)
+    // Channels tile (at-a-glance only)
     const cs = ocStatus?.channelSummary || [];
+    const lc2 = ocStatus?.linkChannel;
+    const linked = (lc2 && lc2.linked) ? (lc2.label || lc2.id || 'linked') : 'none';
     tChannels.textContent = `${cs.length || 0}`;
-    tChannelsSub.textContent = (cs || []).slice(0, 3).join(' · ');
+    tChannelsSub.textContent = `linked=${linked}`;
 
-    // Security audit tile + panel
+    // Security audit tile + panel (tile stays at-a-glance; details in left panel)
     const sa = ocStatus?.securityAudit?.summary || {};
     const warn = sa.warn ?? 0;
     const crit = sa.critical ?? 0;
-    tSecurity.textContent = (crit > 0) ? `critical ${crit}` : (warn > 0 ? `warn ${warn}` : 'clean');
-    tSecuritySub.textContent = (crit > 0) ? 'needs attention' : (warn > 0 ? 'review recommended' : 'no findings');
+    tSecurity.textContent = (crit > 0) ? `CRIT ${crit}` : (warn > 0 ? `WARN ${warn}` : 'OK');
+    tSecuritySub.textContent = `crit=${crit} • warn=${warn}`;
     renderSecurityAudit(ocStatus);
 
     // Sessions tile
