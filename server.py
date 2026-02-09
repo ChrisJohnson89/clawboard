@@ -36,7 +36,7 @@ APP_TITLE = os.getenv("CLAWBOARD_TITLE", "Clawboard")
 
 OPENCLAW_TIMEOUT_SEC = float(os.getenv("CLAWBOARD_OPENCLAW_TIMEOUT", "12"))
 CRON_RUNS_LIMIT = int(os.getenv("CLAWBOARD_CRON_RUNS_LIMIT", "8"))
-STATUS_POLL_SEC = float(os.getenv("CLAWBOARD_STATUS_POLL_SEC", "10.0"))
+STATUS_POLL_SEC = float(os.getenv("CLAWBOARD_STATUS_POLL_SEC", "30.0"))
 TELEGRAM_TAIL_POLL_SEC = float(os.getenv("CLAWBOARD_TELEGRAM_TAIL_POLL_SEC", "3.0"))
 CRON_STATUS_TTL_SEC = float(os.getenv("CLAWBOARD_CRON_STATUS_TTL_SEC", "10.0"))
 
@@ -74,6 +74,10 @@ class Status:
 
 
 _event_bus: "queue.Queue[dict]" = queue.Queue(maxsize=500)
+_clients_connected: int = 0
+_last_client_at: float = 0.0
+_client_lock = threading.Lock()
+
 _last_status: Optional[Status] = None
 _last_good_openclaw_status: Optional[dict] = None
 _last_good_at: Optional[float] = None
@@ -283,11 +287,11 @@ def openclaw_cron_list() -> Optional[dict]:
 
 
 
-def cron_snapshot(ttl_sec: float = 15.0) -> dict:
+def cron_snapshot(ttl_sec: float = 60.0, force: bool = False) -> dict:
     """Return cron jobs + last run metadata (cached)."""
     global _cron_cache, _cron_cache_at
 
-    if _cron_cache is not None and _cron_cache_at and (time.time() - _cron_cache_at) < ttl_sec:
+    if (not force) and _cron_cache is not None and _cron_cache_at and (time.time() - _cron_cache_at) < ttl_sec:
         return _cron_cache
 
     out: dict = {"ts": time.time(), "jobs": []}
@@ -580,11 +584,37 @@ def telegram_tail_loop() -> None:
         time.sleep(TELEGRAM_TAIL_POLL_SEC + (idle_cycles * 0.5))
 
 
+def cron_loop() -> None:
+    """Refresh cron snapshot in background (avoid expensive per-request work)."""
+    while True:
+        try:
+            active = False
+            with _client_lock:
+                active = _clients_connected > 0 and (time.time() - _last_client_at) < 90
+
+            if active:
+                cron_snapshot(force=True)
+                time.sleep(float(os.getenv("CLAWBOARD_CRON_POLL_SEC", "60.0")))
+            else:
+                # idle: refresh rarely
+                time.sleep(float(os.getenv("CLAWBOARD_CRON_IDLE_POLL_SEC", "300.0")))
+        except Exception:
+            time.sleep(60.0)
+
+
 def status_loop() -> None:
     prev_linked = None
     prev_restart_ts = None
 
     while True:
+        # If nobody is watching, don't hammer the OpenClaw CLI.
+        with _client_lock:
+            active = _clients_connected > 0 and (time.time() - _last_client_at) < 90
+
+        if not active:
+            time.sleep(float(os.getenv("CLAWBOARD_STATUS_IDLE_POLL_SEC", "60.0")))
+            continue
+
         st = compute_status()
 
         # Always emit status snapshots so clients don't need to poll /api/status.
@@ -721,7 +751,7 @@ def run_update() -> dict:
 
 @app.get("/api/cron")
 def api_cron():
-    return jsonify(cron_snapshot())
+    return jsonify(_cron_cache or cron_snapshot(ttl_sec=300.0, force=False))
 
 
 @app.get("/api/update")
@@ -749,19 +779,33 @@ def api_host():
 @app.get("/api/events")
 def api_events():
     def gen():
-        yield "event: hello\n"
-        yield f"data: {json.dumps({'title': APP_TITLE})}\n\n"
-        while True:
-            evt = _event_bus.get()
-            etype = evt.get("type", "event")
-            yield f"event: {etype}\n"
-            yield f"data: {json.dumps(evt)}\n\n"
+        global _clients_connected, _last_client_at
+        with _client_lock:
+            _clients_connected += 1
+            _last_client_at = time.time()
+
+        try:
+            yield "event: hello\n"
+            yield f"data: {json.dumps({'title': APP_TITLE})}\n\n"
+            while True:
+                with _client_lock:
+                    _last_client_at = time.time()
+                evt = _event_bus.get()
+                etype = evt.get("type", "event")
+                yield f"event: {etype}\n"
+                yield f"data: {json.dumps(evt)}\n\n"
+        except GeneratorExit:
+            return
+        finally:
+            with _client_lock:
+                _clients_connected = max(0, _clients_connected - 1)
 
     return Response(gen(), mimetype="text/event-stream")
 
 
 if __name__ == "__main__":
     threading.Thread(target=status_loop, daemon=True).start()
+    threading.Thread(target=cron_loop, daemon=True).start()
     threading.Thread(target=telegram_tail_loop, daemon=True).start()
     port = int(os.getenv("PORT", "3333"))
     app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
