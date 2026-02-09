@@ -107,8 +107,10 @@ def _emit(evt: dict) -> None:
     evt.setdefault("ts", time.time())
 
     # Keep a rolling cache so UI reloads don't lose the last few events.
+    # NOTE: exclude high-frequency snapshots (e.g. status) to avoid flooding the Activity feed.
     try:
-        _activity_push(evt)
+        if evt.get("type") != "status":
+            _activity_push(evt)
     except Exception:
         pass
 

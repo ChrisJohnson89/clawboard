@@ -239,8 +239,11 @@
   }
 
   function shouldShowEvent(evt) {
-    if (!selectedAgent) return true;
     if (!evt || !evt.type) return true;
+    // Never show high-frequency snapshots in the timeline.
+    if (evt.type === 'status') return false;
+
+    if (!selectedAgent) return true;
     // Only filter session events for now.
     if (evt.type === 'session') {
       return (evt.session?.agentId || '') === selectedAgent;
