@@ -7,11 +7,18 @@ Local-first **security & ops posture** dashboard for **OpenClaw**.
 - **Metadata-only activity feed** (privacy first): shows message *events* (inbound/outbound, channel, target, voice/file flags) but **never message contents**
 - Designed to avoid whole-page horizontal scrolling; cards scroll internally
 
-## Screenshot / URL
+## URL
 Deployed on the OpenClaw host and exposed over Tailnet.
 
 - App: `http://127.0.0.1:3333`
 - Tailnet (Serve): `https://ip-172-31-17-58.tail23fb1f.ts.net:8444/`
+
+## Demo checklist (2 minutes)
+- Open the page → confirm **Overall Health** bar is green
+- Click **Update** tile → confirm version/availability loads
+- Check **Cron Jobs** panel → confirm jobs list + last run status renders
+- Scroll **Security Audit** findings → confirm it scrolls internally (no page-wide overflow)
+- Watch **Timeline** update live (SSE)
 
 ## Requirements
 - Linux host with systemd

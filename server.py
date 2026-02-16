@@ -1,4 +1,4 @@
-"""Clawboard — a local-first dashboard for OpenClaw.
+"""ClawSentry (repo: clawboard) — a local-first dashboard for OpenClaw.
 
 Principles:
 - Fast + lightweight by default.
@@ -45,10 +45,14 @@ OPENCLAW_DIR = os.path.expanduser(os.getenv("OPENCLAW_DIR", "~/.openclaw"))
 RESTART_SENTINEL = os.path.join(OPENCLAW_DIR, "restart-sentinel.json")
 
 # Public repos to show commit activity for (metadata only)
+# Default is the current repo name; if you rename GitHub to "clawsentry", set:
+#   CLAWBOARD_GITHUB_REPO=clawsentry
+GITHUB_OWNER = os.getenv("CLAWBOARD_GITHUB_OWNER", "ChrisJohnson89")
+GITHUB_REPO = os.getenv("CLAWBOARD_GITHUB_REPO", "clawboard")
 REPO_ACTIVITY = [
-    ("ChrisJohnson89", "clawboard"),
-    ("ChrisJohnson89", "Ferromon"),
-    ("ChrisJohnson89", "openclaw-configs"),
+    (GITHUB_OWNER, GITHUB_REPO),
+    (GITHUB_OWNER, "Ferromon"),
+    (GITHUB_OWNER, "openclaw-configs"),
 ]
 
 app = Flask(__name__)

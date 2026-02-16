@@ -206,7 +206,8 @@
   const healthMeta = document.getElementById('healthMeta');
   const updateMeta = document.getElementById('updateMeta');
 
-  let selectedAgent = localStorage.getItem('clawboard.agent') || '';
+  const STORAGE_KEY_AGENT = 'clawsentry.agent';
+  let selectedAgent = localStorage.getItem(STORAGE_KEY_AGENT) || '';
 
   const tGateway = document.getElementById('tGateway');
   const tGatewaySub = document.getElementById('tGatewaySub');
@@ -369,7 +370,7 @@
     // If selected agent no longer exists, reset.
     if (selectedAgent && !agents.includes(selectedAgent)) {
       selectedAgent = '';
-      localStorage.removeItem('clawboard.agent');
+      localStorage.removeItem(STORAGE_KEY_AGENT);
     }
 
     const existing = new Set(Array.from(agentSelect.options).map(o => o.value));
@@ -388,8 +389,8 @@
     if (!agentSelect) return;
     agentSelect.addEventListener('change', async () => {
       selectedAgent = agentSelect.value || '';
-      if (selectedAgent) localStorage.setItem('clawboard.agent', selectedAgent);
-      else localStorage.removeItem('clawboard.agent');
+      if (selectedAgent) localStorage.setItem(STORAGE_KEY_AGENT, selectedAgent);
+      else localStorage.removeItem(STORAGE_KEY_AGENT);
       // Re-render from server caches
       await refreshAll();
     });
