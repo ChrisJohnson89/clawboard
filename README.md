@@ -1,4 +1,4 @@
-# ClawSentry (formerly Clawboard)
+# ClawSentry
 
 Local-first **security & ops posture** dashboard for **OpenClaw**.
 
@@ -27,7 +27,8 @@ Deployed on the OpenClaw host and exposed over Tailnet.
 
 ## Run locally (dev)
 ```bash
-cd clawboard
+git clone git@github.com:ChrisJohnson89/clawsentry.git
+cd clawsentry
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -36,8 +37,8 @@ python3 server.py
 ```
 
 ## Run as a service (prod)
-Systemd unit lives at:
-- `/etc/systemd/system/clawboard.service`
+Systemd unit currently lives at:
+- `/etc/systemd/system/clawboard.service` *(name is legacy; you can rename it later)*
 
 Typical commands:
 ```bash
@@ -55,9 +56,10 @@ sudo journalctl -u clawboard -f
   - `/api/events` (SSE stream)
 - Activity feed is derived by tailing OpenClaw session `.jsonl` logs and extracting **metadata only**.
 
-## Naming
-The repo may still be named `clawboard`, but the product name is **ClawSentry**.
-If/when the GitHub repo is renamed to `clawsentry`, update your git remote:
+## Repo
+GitHub: `ChrisJohnson89/clawsentry`
+
+If you cloned before the rename, update your remote:
 ```bash
 git remote set-url origin git@github.com:ChrisJohnson89/clawsentry.git
 ```
@@ -66,5 +68,39 @@ git remote set-url origin git@github.com:ChrisJohnson89/clawsentry.git
 - No message content is displayed or persisted by the dashboard.
 - Do not commit secrets (tokens/keys) into this repo.
 
+## If you're an agent (install/run on an OpenClaw host)
+This is the no-surprises path to get ClawSentry running on the same box as OpenClaw.
+
+1) Clone
+```bash
+cd /home/ec2-user/.openclaw/workspace
+git clone git@github.com:ChrisJohnson89/clawsentry.git
+```
+
+2) Python deps
+```bash
+cd clawsentry
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+3) Run it
+```bash
+source .venv/bin/activate
+python3 server.py
+# http://127.0.0.1:3333
+```
+
+4) (Optional) Make it a systemd service
+- Existing unit on this host may still be named `clawboard.service`.
+- If you create a new unit, point `WorkingDirectory=` at the repo folder and `ExecStart=` at `python3 server.py`.
+
+5) (Optional) If GitHub repo was renamed
+Set env so the “repo commits” panel tracks the correct slug:
+```bash
+export CLAWBOARD_GITHUB_REPO=clawsentry
+```
+
 ## License
-TBD.
+MIT.
