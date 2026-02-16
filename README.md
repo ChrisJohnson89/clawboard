@@ -27,7 +27,7 @@ Deployed on the OpenClaw host and exposed over Tailnet.
 
 ## Run locally (dev)
 ```bash
-git clone git@github.com:ChrisJohnson89/clawsentry.git
+git clone git@github.com:ChrisJohnson89/ClawSentry.git clawsentry
 cd clawsentry
 python3 -m venv .venv
 source .venv/bin/activate
@@ -74,7 +74,7 @@ This is the no-surprises path to get ClawSentry running on the same box as OpenC
 1) Clone
 ```bash
 cd /home/ec2-user/.openclaw/workspace
-git clone git@github.com:ChrisJohnson89/clawsentry.git
+git clone git@github.com:ChrisJohnson89/ClawSentry.git clawsentry
 ```
 
 2) Python deps
