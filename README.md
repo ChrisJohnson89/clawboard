@@ -8,10 +8,10 @@ Local-first **security & ops posture** dashboard for **OpenClaw**.
 - Designed to avoid whole-page horizontal scrolling; cards scroll internally
 
 ## URL
-Deployed on the OpenClaw host and exposed over Tailnet.
+Deployed on the OpenClaw host and exposed over your tailnet.
 
 - App: `http://127.0.0.1:3333`
-- Tailnet (Serve): `https://ip-172-31-17-58.tail23fb1f.ts.net:8444/`
+- Tailnet: expose the app with `tailscale serve 3333` and use the HTTPS URL it prints
 
 ## Demo checklist (2 minutes)
 - Open the page → confirm **Overall Health** bar is green
@@ -73,7 +73,7 @@ This is the no-surprises path to get ClawSentry running on the same box as OpenC
 
 1) Clone
 ```bash
-cd /home/ec2-user/.openclaw/workspace
+cd ~/.openclaw/workspace
 git clone git@github.com:ChrisJohnson89/ClawSentry.git clawsentry
 ```
 
